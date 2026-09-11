@@ -6,12 +6,12 @@
 Что проверяем этим спайком:
   1. Отсекается ли боилерплейт (навигация, Academic Tools, Related Entries...).
   2. Даёт ли нормализация ОДИНАКОВЫЙ хеш для изданий без изменений
-     (контрольная пара fall2023 -> win2023).
+     (контрольные пары вроде kant fall2023 -> win2023).
   3. Совпадает ли наша классификация substantive/minor с archinfo.cgi.
      Гипотеза: substantive <=> сменилась дата "substantive revision" в #pubinfo.
-  4. Читаем ли diff глазами (data/spike/report.html).
+  4. Читаем ли diff глазами (data/spike/report.<entry>.html).
 
-Запуск:  uv run python spike/analyze.py
+Запуск:  uv run python spike/analyze.py [entry ...]   (по умолчанию все из ARCHINFO)
 """
 
 from __future__ import annotations
@@ -19,27 +19,69 @@ from __future__ import annotations
 import hashlib
 import html
 import re
+import sys
 import time
 import unicodedata
 from dataclasses import dataclass
+from datetime import date
 from difflib import SequenceMatcher
 from pathlib import Path
 
 from selectolax.lexbor import LexborHTMLParser, LexborNode
 
-from fetch import CACHE, EDITIONS, ENTRY
+from fetch import CACHE
 
 # --------------------------------------------------------------------------
-# Эталон: снят вручную с archinfo.cgi?entry=kant (автоматически туда нельзя —
-# /cgi-bin/ закрыт в robots.txt). "unchanged" = identical или markup_only.
+# Эталон: снят вручную с archinfo.cgi?entry=<slug> (автоматически туда нельзя —
+# /cgi-bin/ закрыт в robots.txt). Там перечислены только издания, в которых
+# статья менялась; в остальных лежит копия предыдущей версии.
+# Ожидание для пары (a, b) — самое сильное изменение в изданиях (a, b];
+# "unchanged" = identical или markup_only.
 # --------------------------------------------------------------------------
-EXPECTED = {
-    ("sum2010", "spr2016"): "substantive",   # между ними ещё fall2010, sum2014 (minor)
-    ("spr2016", "fall2020"): "substantive",  # между ними sum2018, spr2020 (minor)
-    ("fall2020", "fall2023"): "minor",
-    ("fall2023", "win2023"): "unchanged",    # контрольная пара
-    ("win2023", "fall2024"): "substantive",
+_S, _M = "substantive", "minor"
+ARCHINFO: dict[str, dict[str, str]] = {
+    "kant": {
+        "sum2010": "first", "fall2010": _M, "sum2014": _M, "spr2016": _S, "sum2018": _M,
+        "spr2020": _M, "fall2020": _S, "fall2023": _M, "fall2024": _S,
+    },
+    "qualia": {
+        "fall1997": "first", "win1997": _S, "spr2003": _S, "sum2003": _S, "fall2007": _S,
+        "sum2008": _M, "fall2008": _M, "sum2009": _M, "sum2013": _S, "fall2013": _M,
+        "fall2015": _S, "win2016": _M, "win2017": _S, "sum2018": _M, "fall2021": _S,
+        "fall2025": _S,
+    },
+    "logic-paraconsistent": {
+        "fall1997": "first", "win2000": _S, "sum2004": _M, "win2004": _S, "win2007": _S,
+        "fall2008": _M, "spr2009": _S, "sum2009": _M, "spr2013": _M, "sum2013": _S,
+        "fall2013": _M, "spr2015": _M, "win2016": _S, "fall2017": _S, "sum2018": _S,
+        "spr2022": _S, "spr2025": _M, "sum2026": _S,
+    },
+    "logic-modal": {
+        "spr2000": "first", "win2001": _S, "win2003": _S, "sum2005": _M, "sum2007": _S,
+        "spr2008": _M, "sum2008": _S, "fall2008": _M, "win2008": _M, "spr2009": _M,
+        "fall2009": _S, "win2009": _S, "win2012": _M, "spr2013": _M, "sum2014": _S,
+        "spr2016": _M, "fall2018": _S, "sum2021": _M, "spr2023": _S, "spr2024": _M,
+    },
 }
+_SEASONS = {"spr": 0, "sum": 1, "fall": 2, "win": 3}   # 21 марта / июня / сентября / декабря
+_EDITION_RE = re.compile(r"(spr|sum|fall|win)(\d{4})")
+
+
+def ed_key(edition: str) -> tuple[int, int]:
+    m = _EDITION_RE.fullmatch(edition)
+    if m is None:
+        raise ValueError(f"не издание SEP: {edition!r}")
+    return int(m.group(2)), _SEASONS[m.group(1)]
+
+
+def expected(entry: str, a: str, b: str) -> str | None:
+    hist = ARCHINFO.get(entry)
+    if hist is None:
+        return None
+    labels = [lab for ed, lab in hist.items() if ed_key(a) < ed_key(ed) <= ed_key(b)]
+    if _S in labels:
+        return _S
+    return _M if labels else "unchanged"
 
 HEADINGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 LEAF_BLOCKS = {"p", "li", "blockquote", "dd", "dt", "pre", "td", "th", "figcaption"} | HEADINGS
@@ -58,14 +100,36 @@ BIBLIO_HEADINGS = {"bibliography"}
 APPARATUS_HEADINGS = {"other internet resources", "related entries"}
 APPARATUS_IDS = ["other-internet-resources", "related-entries"]
 DROP_HEADINGS = {"academic tools"}  # генерирует сайт, а не автор
+# Идут после Related Entries, но это снова текст статьи.
+BODY_HEADINGS = {"acknowledgments", "acknowledgements", "acknowledgment", "acknowledgement"}
 
 _PUNCT = str.maketrans({
-    "‘": "'", "’": "'", "‚": "'", "‛": "'",
+    "‘": "'", "’": "'", "‚": "'", "‛": "'", "`": "'",   # `qualia' в изданиях 1997 года
     "“": '"', "”": '"', "„": '"',
     "–": "-", "—": "-", "−": "-",
     " ": " ", " ": " ", " ": " ", "​": "",
 })
-_DATE = r"\w{3}\s+\w{3}\s+\d{1,2},\s+\d{4}"   # "Tue Jul 28, 2020"
+_MONTHS = {m: i for i, m in enumerate(
+    ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
+_MDY = r"([a-z]{3})[a-z]*\.?\s+(\d{1,2}),?\s+(\d{4})"   # "Jul 28, 2020" / "JUN 6 2003" / "September 8, 1997"
+# Где SEP держал дату последней существенной правки — по эпохам вёрстки.
+# Порядок важен: сначала явная «substantive», потом менее точные метки.
+_DATE_PATTERNS = [
+    rf"substantive revision\s+[a-z]{{3}}\s+{_MDY}",          # 2007+: #pubinfo
+    rf"last substantive content change\s+{_MDY}",            # 2003-2006: плашка в шапке
+    rf"content revised\s+{_MDY}",                            # ~2002: плашка в шапке
+    rf"content last modified:?\s+{_MDY}",                    # 1996-2001: подвал
+    rf"first published\s+[a-z]{{3}}\s+{_MDY}",              # 2007+, правок ещё не было
+]
+
+
+def _find_date(text: str) -> tuple[str | None, int]:
+    """(дата последней существенной правки в ISO, номер шаблона) или (None, -1)."""
+    for i, pat in enumerate(_DATE_PATTERNS):
+        m = re.search(pat, text, re.I)
+        if m and m.group(1).lower() in _MONTHS:
+            return f"{m.group(3)}-{_MONTHS[m.group(1).lower()]:02d}-{int(m.group(2)):02d}", i
+    return None, -1
 
 
 def normalize(s: str) -> str:
@@ -108,6 +172,7 @@ class Doc:
     raw_sha: str
     coverage: float
     div_ids: list[str]
+    date_source: int = -1    # индекс в _DATE_PATTERNS: из какой эпохи вёрстки взята дата
 
     @property
     def body_sha(self) -> str:
@@ -124,6 +189,11 @@ class Doc:
     @property
     def text_sha(self) -> str:
         return sha(self.body_sha + self.biblio_sha)
+
+    @property
+    def struct_sha(self) -> str:
+        """Разбиение на блоки без текста: ловит правки вроде «голый текст обернули в <p>»."""
+        return sha(" ".join(b.kind for b in self.body + self.biblio))
 
     @property
     def word_count(self) -> int:
@@ -212,6 +282,8 @@ def _split_by_headings(blocks: list[Block]) -> tuple[list[Block], list[Block], l
             if key in DROP_HEADINGS:
                 mode = "drop"
                 continue
+            if key in BODY_HEADINGS:
+                mode = "body"
             if mode != "body":
                 continue
         out[mode].append(b)
@@ -232,6 +304,46 @@ def _drop_anchor_lists(root: LexborNode) -> None:
             return
 
 
+def _drop_before(node: LexborNode, stop: LexborNode) -> None:
+    """Удалить всё, что в документе идёт раньше node (в пределах stop)."""
+    while node is not None and node is not stop:
+        prev = node.prev
+        while prev is not None:
+            nxt = prev.prev
+            prev.decompose()
+            prev = nxt
+        node = node.parent
+
+
+_FOOTER_RE = re.compile(r"^copyright\s*(©|\(c\))", re.I)
+
+
+def _cut_footer(blocks: list[Block]) -> list[Block]:
+    """Старая вёрстка: всё от последнего «Copyright ©» — подвал сайта (A–Z, даты, ссылки)."""
+    for i in range(len(blocks) - 1, -1, -1):
+        if _FOOTER_RE.match(blocks[i].text):
+            return blocks[:i]
+    return blocks
+
+
+# До ~2012 логические символы в SEP — картинки <img src="Box.gif">. Меняем на
+# Unicode, иначе они молча пропадают из текста, а переход GIF -> Unicode
+# (logic-modal win2003 -> sum2005) выглядит как правка в 132 абзацах.
+SYMBOL_IMAGES = {
+    "box": "□", "diamond": "◊", "ra": "→", "uc-rightarrow": "⇒", "lra": "↔",
+    "forall": "∀", "exists": "∃", "e": "∃", "vel": "∨", "models": "⊨", "vdash": "⊢",
+    "element": "∈", "not-in": "∉", "not-element": "∉", "supset": "⊃", "circ": "∘",
+    "fishhook": "⥽", "perp": "⊥", "prime": "′", "omega": "ω",
+}
+
+
+def _img_text(img: LexborNode) -> str:
+    """Символ для картинки-символа, иначе устойчивая метка: смена картинки видна в diff."""
+    src = img.attributes.get("src") or ""
+    name = re.sub(r"\.\w+$", "", src.rsplit("/", 1)[-1]).lower()
+    return SYMBOL_IMAGES.get(name) or f"[img:{name}]"
+
+
 def _decode(raw: bytes) -> tuple[str, str]:
     try:
         return raw.decode("utf-8"), "utf-8"
@@ -244,6 +356,8 @@ def extract(edition: str, raw: bytes) -> Doc:
     tree = LexborHTMLParser(text)
     for n in tree.css("script, style, noscript"):
         n.decompose()
+    for img in tree.css("img"):
+        img.replace_with(_img_text(img))
 
     div_ids = [n.attributes.get("id") or "" for n in tree.css("div[id]")]
 
@@ -252,12 +366,12 @@ def extract(edition: str, raw: bytes) -> Doc:
 
     pub_node = tree.css_first("#pubinfo")
     pubinfo = normalize(pub_node.text(separator=" ")) if pub_node else ""
-    if not pubinfo and tree.body is not None:
-        m = re.search(r"First published.{0,160}", normalize(tree.body.text(separator=" ")))
-        pubinfo = m.group(0) if m else ""
-    m = re.search(rf"substantive revision\s+({_DATE})", pubinfo) or \
-        re.search(rf"First published\s+({_DATE})", pubinfo)
-    revision_date = m.group(1) if m else None
+    if pubinfo:
+        revision_date, date_source = _find_date(pubinfo)
+    elif tree.body is not None:  # до 2007: дата в плашке шапки или в подвале
+        revision_date, date_source = _find_date(normalize(tree.body.text(separator=" ")))
+    else:
+        revision_date, date_source = None, -1
 
     # Библиографию снимаем первой и вырезаем, чтобы она не попала в тело,
     # если в какой-то эпохе вёрстки она лежит внутри #main-text.
@@ -276,11 +390,20 @@ def extract(edition: str, raw: bytes) -> Doc:
     main = tree.css_first("#main-text")
     if main is not None:
         extractor = "modern"
-        roots = [n for n in (tree.css_first("#preamble"), main) if n is not None]
+        # Благодарности лежат вне #main-text, после Related Entries, но их пишет
+        # автор и правит SEP (кто нашёл опечатку) — это часть текста статьи.
+        roots = [n for n in (tree.css_first("#preamble"), main, tree.css_first("#acknowledgments"))
+                 if n is not None]
     else:
         root = tree.css_first("#aueditable") or tree.css_first("#article")
         extractor = "aueditable" if root is not None else "fallback-body"
         root = root or tree.body
+        if extractor == "fallback-body":
+            # До 2007 статья лежит прямо в <body>: шапка сайта (баннер архива,
+            # «how to cite», A–Z, плашка с датой) — всё, что выше <h1>.
+            h1 = root.css_first("h1")
+            if h1 is not None:
+                _drop_before(h1, root)
         for jid in JUNK_IDS:
             for n in root.css(f"#{jid}"):
                 n.decompose()
@@ -290,15 +413,19 @@ def extract(edition: str, raw: bytes) -> Doc:
         roots = [root]
 
     walked = _walk(roots)
-    container_words = sum(len(normalize(r.text(separator=" ")).split()) for r in roots)
-    block_words = sum(len(b.words) for b in walked)
-    coverage = block_words / container_words if container_words else 0.0
+    # Покрытие считаем по непробельным символам, а не по словам: в формулах
+    # "(A→B)" с разметкой <sub>/<em> иначе рассыпается на лишние «слова».
+    container_chars = sum(len(re.sub(r"\s", "", normalize(r.text(separator="")))) for r in roots)
+    block_chars = sum(len(b.text.replace(" ", "")) for b in walked)
+    coverage = block_chars / container_chars if container_chars else 0.0
+    if extractor == "fallback-body":
+        walked = _cut_footer(walked)
     body, tail_biblio, tail_apparatus = _split_by_headings(walked)
     biblio += tail_biblio
     apparatus += tail_apparatus
 
     return Doc(edition, extractor, encoding, title, pubinfo, revision_date,
-               body, biblio, apparatus, sha(raw), coverage, div_ids)
+               body, biblio, apparatus, sha(raw), coverage, div_ids, date_source)
 
 
 # --------------------------------------------------------------------------
@@ -393,12 +520,31 @@ class PairStats:
     apparatus_changed: int
 
 
+def _same_date(a: Doc, b: Doc) -> bool:
+    if a.revision_date == b.revision_date:
+        return True
+    if a.date_source == b.date_source:
+        return False
+    # Одно и то же событие в вёрстке разных эпох записано с расхождением в день:
+    # qualia "last modified Nov 1, 1997" -> "content revised NOV 2 1997",
+    # logic-paraconsistent "Dec 5, 2000" -> "last substantive content change DEC 6 2000".
+    days = date.fromisoformat(a.revision_date) - date.fromisoformat(b.revision_date)  # type: ignore[arg-type]
+    return abs(days.days) <= 1
+
+
 def classify(a: Doc, b: Doc) -> str:
     if a.raw_sha == b.raw_sha:
         return "identical"
+    dated = a.revision_date is not None and b.revision_date is not None
+    # Дата — это и есть метка SEP: сменилась -> substantive, даже если текст тот же
+    # (logic-paraconsistent fall1997 -> win2000: поменялись только ссылки).
+    if dated and not _same_date(a, b):
+        return "substantive"
     if a.text_sha == b.text_sha:
-        return "minor" if a.apparatus_sha != b.apparatus_sha else "markup_only"
-    return "substantive" if a.revision_date != b.revision_date else "minor"
+        if a.apparatus_sha != b.apparatus_sha or a.struct_sha != b.struct_sha:
+            return "minor"
+        return "markup_only"
+    return "minor" if dated else "changed"   # без даты вид правки не определить
 
 
 def pair_stats(a: Doc, b: Doc, body_ops: list[Op], biblio_ops: list[Op],
@@ -494,15 +640,17 @@ def render_ops(ops: list[Op], context: int = 1) -> str:
     return "\n".join(out) or '<div class="skip">изменений нет</div>'
 
 
-def _verdict(pair: tuple[str, str], kind: str) -> tuple[str, str]:
-    exp = EXPECTED.get(pair)
+def _verdict(entry: str, pair: tuple[str, str], kind: str) -> tuple[str, str]:
+    exp = expected(entry, *pair)
     if exp is None:
         return "—", ""
+    if kind == "changed":
+        return exp, "?"
     got = "unchanged" if kind in ("identical", "markup_only") else kind
     return exp, ("PASS" if got == exp else "FAIL")
 
 
-def write_report(docs: list[Doc],
+def write_report(entry: str, docs: list[Doc],
                  pairs: list[tuple[Doc, Doc, list[Op], list[Op], list[Op], PairStats]]) -> Path:
     rows = "".join(
         f"<tr><td><b>{d.edition}</b></td><td>{d.extractor}</td><td>{d.encoding}</td>"
@@ -513,8 +661,8 @@ def write_report(docs: list[Doc],
         for d in docs
     )
     parts = [
-        f"<title>SEPDiff spike — {ENTRY}</title><style>{CSS}</style>",
-        f"<h1>{html.escape(docs[-1].title or ENTRY)}</h1>",
+        f"<title>SEPDiff spike — {entry}</title><style>{CSS}</style>",
+        f"<h1>{html.escape(docs[-1].title or entry)}</h1>",
         f'<div class="meta">спайк: {len(docs)} изданий, {len(pairs)} пар · '
         f"{html.escape(docs[-1].pubinfo)}</div>",
         "<h2>Снимки</h2><table><tr><th>издание</th><th>экстрактор</th><th>кодировка</th>"
@@ -522,7 +670,7 @@ def write_report(docs: list[Doc],
         f"<th>raw_sha</th><th>text_sha</th></tr>{rows}</table>",
     ]
     for a, b, body_ops, biblio_ops, app_ops, st in pairs:
-        exp, verdict = _verdict((a.edition, b.edition), st.kind)
+        exp, verdict = _verdict(entry, (a.edition, b.edition), st.kind)
         vcls = verdict.lower()
         chips = "".join(f'<span class="chip">{html.escape(s)}</span>' for s in st.sections[:12])
         more = f" +{len(st.sections) - 12}" if len(st.sections) > 12 else ""
@@ -539,23 +687,26 @@ def write_report(docs: list[Doc],
             f"{render_ops(app_ops, context=0)}</details>"
             f"</section>"
         )
-    out = CACHE / "report.html"
+    out = CACHE / f"report.{entry}.html"
     out.write_text("\n".join(parts), encoding="utf-8")
     return out
 
 
 # --------------------------------------------------------------------------
 
-def main() -> int:
-    t0 = time.perf_counter()
-    docs: list[Doc] = []
-    for ed in EDITIONS:
-        path = CACHE / f"{ENTRY}.{ed}.html"
-        if path.exists():
-            docs.append(extract(ed, path.read_bytes()))
+def cached_editions(entry: str) -> list[str]:
+    eds = [p.name[len(entry) + 1:-len(".html")] for p in CACHE.glob(f"{entry}.*.html")]
+    return sorted((e for e in eds if _EDITION_RE.fullmatch(e)), key=ed_key)
+
+
+def analyze_entry(entry: str) -> tuple[int, int]:
+    """Таблицы в консоль + отчёт по одной статье. -> (проверок против archinfo, провалов)."""
+    docs = [extract(ed, (CACHE / f"{entry}.{ed}.html").read_bytes())
+            for ed in cached_editions(entry)]
+    print(f"\n=== {entry}: {len(docs)} снимков ===")
     if len(docs) < 2:
-        print(f"В кеше {len(docs)} снимков из {len(EDITIONS)} — сначала spike/fetch.py.")
-        return 1
+        print("мало снимков в кеше — сначала spike/fetch.py")
+        return 0, 0
 
     print(f"{'издание':9s} {'экстр.':13s} {'блоков':>6s} {'слов':>7s} {'покрыт.':>7s} "
           f"{'библ':>4s} {'ссыл':>4s}  {'ревизия':17s} text_sha")
@@ -572,29 +723,36 @@ def main() -> int:
     pairs = []
     print(f"\n{'пара':20s} {'наш вердикт':12s} {'archinfo':12s}      {'+слов':>7s} {'−слов':>7s} "
           f"{'блоков':>6s}  разделы  ссылки")
-    fails = 0
+    checks = fails = 0
     for a, b in zip(docs, docs[1:]):
         body_ops = block_diff(a.body, b.body)
         biblio_ops = block_diff(a.biblio, b.biblio)
         app_ops = block_diff(a.apparatus, b.apparatus)
         st = pair_stats(a, b, body_ops, biblio_ops, app_ops)
-        exp, verdict = _verdict((a.edition, b.edition), st.kind)
+        exp, verdict = _verdict(entry, (a.edition, b.edition), st.kind)
+        checks += verdict in ("PASS", "FAIL")
         fails += verdict == "FAIL"
         print(f"{a.edition + ' → ' + b.edition:20s} {st.kind:12s} {exp:12s} {verdict:4s} "
               f"{st.words_added:>7,d} {st.words_removed:>7,d} {st.blocks_changed:>6d}  "
               f"{len(st.sections):>7d}  {st.apparatus_changed:>6d}")
         pairs.append((a, b, body_ops, biblio_ops, app_ops, st))
 
-    report = write_report(docs, pairs)
-    print(f"\nПроверок против archinfo: {sum(1 for p in pairs if (p[0].edition, p[1].edition) in EXPECTED)}, "
-          f"провалов: {fails}")
+    print(f"Отчёт: {write_report(entry, docs, pairs)}")
+    return checks, fails
+
+
+def main(argv: list[str]) -> int:
+    t0 = time.perf_counter()
+    results = [analyze_entry(e) for e in (argv or list(ARCHINFO))]
+    checks = sum(c for c, _ in results)
+    fails = sum(f for _, f in results)
+    print(f"\nИтого проверок против archinfo: {checks}, провалов: {fails}")
     if _budget_hits:
         print(f"ВНИМАНИЕ: предохранитель выравнивания сработал {_budget_hits} раз — "
               f"часть правок показана как удалить+вставить.")
-    print(f"Отчёт: {report}")
     print(f"Время: {time.perf_counter() - t0:.2f} с")
-    return 0
+    return 1 if fails else 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))

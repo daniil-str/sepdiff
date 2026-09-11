@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import sys
 
-from analyze import block_diff, classify, extract, pair_stats, render_ops
+from analyze import _find_date, block_diff, classify, extract, normalize, pair_stats, render_ops
 
 PAGE = """<!DOCTYPE html><html><head><title>Kant (SEP)</title>
 <script>window.MathJax = {{}};</script><style>body{{}}</style></head><body>
@@ -39,6 +39,7 @@ PAGE = """<!DOCTYPE html><html><head><title>Kant (SEP)</title>
    <div id="academic-tools"><h2>Academic Tools</h2><p>How to cite this entry.</p></div>
    <div id="other-internet-resources"><h2>Other Internet Resources</h2><p>Links.</p></div>
    <div id="related-entries"><h2>Related Entries</h2><p>Hume, David</p>{extra_rel}</div>
+   {ack}
   </div>
  </div>
  <div id="article-copyright"><p>Copyright &copy; 2020 by Michael Rohlf</p></div>
@@ -48,7 +49,7 @@ BASE = dict(
     nav="", rev="Tue Jul 28, 2020", dash="–", o="ö", lived="lived",
     q_open="“", q_close="”", ws="", apos="’",
     extra_para="", deleted_para="<p>A paragraph that will be removed later.</p>",
-    extra_bib="", extra_rel="",
+    extra_bib="", extra_rel="", ack="",
 )
 
 
@@ -86,7 +87,7 @@ d1, d2, d3, d4 = (extract(f"v{i}", raw) for i, raw in enumerate((v1, v2, v3, v4)
 print("Извлечение:")
 check(d1.extractor == "modern", f"экстрактор modern (получили {d1.extractor})")
 check(d1.title == "Immanuel Kant", f"заголовок (получили {d1.title!r})")
-check(d1.revision_date == "Tue Jul 28, 2020", f"дата ревизии (получили {d1.revision_date!r})")
+check(d1.revision_date == "2020-07-28", f"дата ревизии (получили {d1.revision_date!r})")
 body = " | ".join(b.text for b in d1.body)
 for junk in ("Browse", "Academic Tools", "How to cite", "Related Entries", "Copyright",
              "Hume", "MathJax", "editorial comment", "1. Life and works | 1. Life"):
@@ -159,7 +160,7 @@ LEGACY = b"""<html><body><div id="content">
 dl = extract("legacy", LEGACY)
 lbody = " | ".join(b.text for b in dl.body)
 check(dl.extractor == "aueditable", f"экстрактор aueditable (получили {dl.extractor})")
-check(dl.revision_date == "Thu May 20, 2010",
+check(dl.revision_date == "2010-05-20",
       f"без substantive revision берём дату первой публикации (получили {dl.revision_date!r})")
 check(not any(b.text == "Immanuel Kant" for b in dl.body), "h1 статьи не попадает в тело")
 check("2.1 Sub" not in lbody, "оглавление (список из якорных ссылок) выброшено")
@@ -171,6 +172,75 @@ for junk in ("Primary Literature", "Some link", "Hume", "Other Internet Resource
     check(junk not in lbody, f"в теле нет {junk!r}")
 lapp = [b.text for b in dl.apparatus]
 check(lapp == ["Some link", "Hume, David"], f"старая вёрстка: apparatus по заголовкам (получили {lapp})")
+
+print("\nБлагодарности (#acknowledgments вне #main-text):")
+d6 = extract("v6", page(**V4, ack='<div id="acknowledgments"><h3>Acknowledgments</h3>'
+                                   "<p>Thanks to a reader.</p></div>"))
+check("Thanks to a reader." in [b.text for b in d6.body], "благодарности входят в текст статьи")
+check(classify(d4, d6) == "minor", f"v4->v6 (+благодарность, дата та же) -> minor (получили {classify(d4, d6)})")
+
+print("\nДаты по эпохам вёрстки:")
+for text, want in [
+    ("First published Thu May 20, 2010; substantive revision Tue Jul 28, 2020", "2020-07-28"),
+    ("First published Thu May 20, 2010", "2010-05-20"),
+    ("last substantive content change JUN 6 2003 Qualia", "2003-06-06"),
+    ("content revised NOV 2 1997", "1997-11-02"),
+    ("First published: August 20, 1997 Content last modified: September 8, 1997", "1997-09-08"),
+]:
+    got = _find_date(text)[0]
+    check(got == want, f"{text[:45]!r}... -> {want} (получили {got})")
+check(normalize("the term `qualia'") == "the term 'qualia'", "обратная кавычка 1997 года = апостроф")
+
+print("\nВёрстка 1997-2006 (статья прямо в <body>, дата в плашке или подвале):")
+OLD = """<html><body>
+<table width="100%"><td>This is a file in the archives of the <a href="../../../../index.html">SEP</a>.</td></table>
+<table><tr><td>how to cite<br>this entry <a href="x">CITATION<br>INFO</a></td>
+<td><center><h4>Stanford Encyclopedia of Philosophy</h4></center>
+<center><a href="../../contents.html#a">A</a> | <a href="../../contents.html#b">B</a> |
+ <a href="../../contents.html#z">Z</a></center></td>
+<td>{box}</td></tr></table>
+<hr><H1>Qualia</H1>
+Feelings and experiences {vary} widely.
+<P>The entry is divided into sections.
+<h2><a name="Uses">I. Other Uses of the Term `Qualia'</a></h2>
+<p>Consider a painting: <IMG SRC="Box.gif">(A<img src="ra.gif">B), see <img src="fig1.gif">.</p>
+<h2><a name="Bib">Bibliography</a></h2><ul><li>Tye, M., 1995, Ten Problems.</li></ul>
+<h2><a name="Rel">Related Entries</a></h2>consciousness
+<h3>Acknowledgments</h3><p>Thanks to Pat Hayes.</p>
+<P><center><A HREF="../../info.html#c">Copyright &#169; 1997</A> by<br>Michael Tye</center><hr>
+<center><a href="../../contents.html#a">A</a> | <a href="../../contents.html#z">Z</a></center>
+<P><I>First published: August 20, 1997</I><br>{foot}
+</body></html>"""
+
+
+def old(box: str = "", foot: str = "", vary: str = "vary") -> bytes:
+    return OLD.format(box=box, foot=foot, vary=vary).encode("utf-8")
+
+
+o1 = extract("o1", old(foot="<I>Content last modified: November 1, 1997</I>"))
+o2 = extract("o2", old(box="content revised<br><table><tr><td>NOV<br>2<br>1997</td></tr></table>",
+                       vary="differ"))
+o3 = extract("o3", old(box="last substantive content change<table><tr><td>JUN<br>6<br>2003</td></tr></table>",
+                       vary="differ greatly"))
+o4 = extract("o4", old(vary="differ slightly"))
+obody = " | ".join(b.text for b in o1.body)
+check(o1.extractor == "fallback-body", f"экстрактор fallback-body (получили {o1.extractor})")
+check([o.revision_date for o in (o1, o2, o3, o4)] == ["1997-11-01", "1997-11-02", "2003-06-06", None],
+      f"даты из подвала/плашек (получили {[o.revision_date for o in (o1, o2, o3, o4)]})")
+for junk in ("A | B", "CITATION", "Copyright", "archives of the", "First published",
+             "Stanford Encyclopedia", "Qualia |"):
+    check(junk not in obody, f"в теле нет {junk!r}")
+for want in ("Feelings and experiences vary widely.", "I. Other Uses of the Term 'Qualia'",
+             "Thanks to Pat Hayes.", "Consider a painting: □(A→B), see [img:fig1]."):
+    check(want in obody, f"в теле есть {want!r}")
+check([b.text for b in o1.biblio] == ["Tye, M., 1995, Ten Problems."],
+      f"библиография (получили {[b.text for b in o1.biblio]})")
+check([b.text for b in o1.apparatus] == ["consciousness"],
+      f"Related Entries (получили {[b.text for b in o1.apparatus]})")
+check(classify(o1, o2) == "minor",
+      f"Nov 1 (подвал) vs NOV 2 (плашка) — одна и та же дата -> minor (получили {classify(o1, o2)})")
+check(classify(o2, o3) == "substantive", f"новая дата -> substantive (получили {classify(o2, o3)})")
+check(classify(o2, o4) == "changed", f"без даты вид правки неизвестен (получили {classify(o2, o4)})")
 
 print(f"\n{'ВСЁ ЗЕЛЁНОЕ' if not failures else f'ПРОВАЛОВ: {len(failures)}'}")
 sys.exit(1 if failures else 0)
