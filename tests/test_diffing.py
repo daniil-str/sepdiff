@@ -20,6 +20,16 @@ def test_classification_modern():
     assert classify(v4, v5) == "minor"     # только +1 Related Entry
 
 
+def test_dates_from_different_places_alone_are_not_a_revision():
+    # подвал — дата любой правки, плашка — существенной; содержимое то же
+    foot = extract(old(foot="<I>Content last modified: March 9, 2002</I>"))
+    box = extract(old(box="content revised<br><table><tr><td>FEB<br>11<br>2000</td></tr></table>"))
+    assert classify(foot, box) == "markup_only"
+    # тот же источник даты — смена даты по-прежнему substantive
+    foot2 = extract(old(foot="<I>Content last modified: March 9, 2003</I>"))
+    assert classify(foot, foot2) == "substantive"
+
+
 def test_classification_old_layouts():
     o1 = extract(old(foot=FOOTER_NOV1))
     o2 = extract(old(box=BOX_NOV2, vary="differ"))
@@ -28,6 +38,29 @@ def test_classification_old_layouts():
     assert classify(o1, o2) == "minor"         # Nov 1 в подвале = NOV 2 в плашке
     assert classify(o2, o3) == "substantive"
     assert classify(o2, o4) == "changed"       # даты нет — вид правки неизвестен
+
+
+def test_formula_spacing_is_a_change():
+    # SEP считает это minor correction (logic-modal sum2008 -> fall2008)
+    a = extract(old(foot=FOOTER_NOV1, vary="∀xA∨∀xB"))
+    b = extract(old(foot=FOOTER_NOV1, vary="∀xA ∨ ∀xB"))
+    assert classify(a, b) == "minor"
+
+
+def test_pruned_links_are_not_a_revision():
+    dead = extract(page(**SUBSTANTIVE, extra_oir="<p>Dead link.</p>"))
+    assert classify(dead, v4) == "markup_only"          # мёртвую ссылку убрали
+    added = extract(page(**SUBSTANTIVE, extra_oir="<p>New link.</p>"))
+    assert classify(v4, added) == "minor"               # новую добавили
+    assert classify(v4, v5) == "minor"                  # Related Entries — всегда minor
+
+
+def test_related_entry_renamed_by_sep_is_not_a_revision():
+    a = extract(page(extra_rel='<p><a href="../frege-logic/">frege-logic</a></p>'))
+    b = extract(page(extra_rel='<p><a href="../frege-logic/">Frege, Gottlob: theorem</a></p>'))
+    assert classify(a, b) == "markup_only"      # надпись сменил сам SEP, цель ссылки та же
+    c = extract(page(extra_rel='<p><a href="../frege-logic/">frege-logic</a> | <a href="../hume/">Hume</a></p>'))
+    assert classify(a, c) == "minor"            # добавили Related Entry
 
 
 def test_one_word_minor():

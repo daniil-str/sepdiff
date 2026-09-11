@@ -22,8 +22,12 @@ _PUNCT = str.maketrans({
 
 
 def normalize(s: str) -> str:
-    s = unicodedata.normalize("NFC", s).translate(_PUNCT)
+    s = unicodedata.normalize("NFC", s).translate(_PUNCT).replace("…", "...")   # frege fall2003 -> win2003
     return re.sub(r"\s+", " ", s).strip()
+
+
+# Пробелы вокруг знаков формул («∀xA∨∀xB» -> «∀xA ∨ ∀xB») НЕ нормализуем:
+# SEP считает такую правку minor correction (logic-modal sum2008 -> fall2008).
 
 
 def sha(data: str | bytes) -> str:

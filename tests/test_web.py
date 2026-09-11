@@ -43,7 +43,10 @@ def test_scan_history_and_diff(web):
     again = client.post("/e/kant/scan", headers=HX)
     assert 'id="job-1"' in first.text and 'id="job-1"' in again.text   # та же задача, не вторая
     assert 'hx-trigger="every 2s"' in first.text
+    # пока задача идёт, история на странице статьи подтягивается сама
+    assert 'hx-get="/e/kant/history" hx-trigger="every 10s"' in client.get("/e/kant").text
     assert worker.run_once() and not worker.run_once()
+    assert "every 10s" not in client.get("/e/kant").text
 
     page = client.get("/e/kant").text
     assert "Immanuel Kant" in page and "существенная" in page and "Докачать" in page

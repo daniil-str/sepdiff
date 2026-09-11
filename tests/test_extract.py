@@ -1,6 +1,9 @@
+from dataclasses import replace
+
 import pytest
 from pages import BOX_JUN6, BOX_NOV2, FOOTER_NOV1, LEGACY, RELATED, SUBSTANTIVE, old, page
 
+from sepdiff.diffing import classify
 from sepdiff.extract import extract, find_date
 from sepdiff.normalize import normalize
 
@@ -69,6 +72,16 @@ def test_layout_1997():
     assert [b.text for b in d.apparatus] == ["consciousness"]
 
 
+def test_footer_glued_to_last_block():
+    raw = b"""<html><body><h1>T</h1><p>Body text.</p>
+    <h2>Related Entries</h2>consciousness | qualia Copyright &#169; 1995, 2002 by Someone
+    <a href="../../contents.html#a">A</a> | Z
+    <p><img src="../../symbols/contents.gif">Table of Contents</p></body></html>"""
+    d = extract(raw)
+    assert [b.text for b in d.body] == ["Body text."]
+    assert [b.text for b in d.apparatus] == ["consciousness | qualia"]
+
+
 @pytest.mark.parametrize(("raw", "want"), [
     (old(box=BOX_NOV2), ("1997-11-02", "header-revised")),
     (old(box=BOX_JUN6), ("2003-06-06", "header-substantive")),
@@ -91,7 +104,37 @@ def test_find_date(text, want):
     assert find_date(text)[0] == want
 
 
+def test_image_only_blocks_are_not_text():
+    d = extract(page(extra_para='<p><img src="portrait.jpg"></p>'))
+    assert not any("[img:" in b.text for b in d.body)
+    assert d.text_sha == extract(page()).text_sha
+
+
+def test_apparatus_links_count():
+    a = extract(page(extra_oir='<p><a href="http://example.org/frege.html">Web page</a></p>'))
+    b = extract(page(extra_oir='<p><a href="https://example.org/frege.html">Web page</a></p>'))
+    assert a.text_sha == b.text_sha and a.apparatus_sha == b.apparatus_sha
+    assert a.links_sha != b.links_sha
+    assert classify(a, b) == "minor"                 # поменялся только адрес — всё равно правка
+    c = extract(page(extra_rel='<p><a href="../../archives/fall2024/entries/hume/">Hume</a></p>'))
+    d = extract(page(extra_rel='<p><a href="../../archives/win2024/entries/hume/">Hume</a></p>'))
+    assert c.links_sha == d.links_sha                # издание в адресе — не правка
+    # вёрстка до 2016 адресов не выделяет: их появление на смене вёрстки — не правка
+    assert classify(replace(a, oir_links=[], related_links=[], raw_sha="old-layout"), a) == "markup_only"
+
+
+def test_supplementary_documents():
+    base = page()
+    with_supp = base.replace(b'<div id="toc"><ul>', b'<div id="toc"><ul><li><a href="supplement.html">Supplement</a></li>')
+    a, b = extract(base), extract(with_supp)
+    assert b.supplements == ["supplement.html"] and a.supplements == []
+    assert a.text_sha == b.text_sha and classify(a, b) == "minor"   # новый доп. документ — правка
+    notes = extract(page(extra_para='<p>See <a href="notes.html#note-1">note 1</a> and <a href="../hume/">Hume</a>.</p>'))
+    assert notes.supplements == ["notes.html"]
+
+
 def test_normalize_typography():
+    assert normalize("A1,…,An") == "A1,...,An"
     assert normalize("the term `qualia'") == "the term 'qualia'"
     assert normalize("“Sapere aude!”   is the – motto") == '"Sapere aude!" is the - motto'
     assert normalize("zero​width") == "zerowidth"

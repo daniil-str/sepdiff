@@ -14,7 +14,7 @@ minor correction). Навигация, Academic Tools, подвал выбрас
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from selectolax.lexbor import LexborHTMLParser, LexborNode
 
@@ -22,7 +22,11 @@ from .normalize import normalize, sha
 
 # Повышать при любой правке, меняющей результат извлечения: снимки со старой
 # версией переизвлекаются из сохранённого HTML (service.Library.rebuild).
-EXTRACT_VERSION = 1
+# 2: подвал внутри блока (+ пробная нормализация формул, откачена в 3).
+# 4: многоточие, блоки из одних картинок, адреса ссылок в apparatus.
+# 5: адреса ссылок — отдельный links_sha. 6: адреса по разделам.
+# 7: набор дополнительных документов статьи — в struct_sha.
+EXTRACT_VERSION = 7
 
 HEADINGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 LEAF_BLOCKS = {"p", "li", "blockquote", "dd", "dt", "pre", "td", "th", "figcaption"} | HEADINGS
@@ -95,18 +99,38 @@ class Doc:
     apparatus: list[Block]
     raw_sha: str
     coverage: float   # доля непробельных символов контейнера, попавших в блоки
+    # Адреса ссылок Related Entries и Other Internet Resources (только вёрстка 2016+,
+    # где у разделов свои div). Правку одного адреса SEP считает minor (frege fall2024:
+    # http -> https), а надписи Related Entries подставляет сам — см. diffing.links_kind.
+    related_links: list[str] = field(default_factory=list)
+    oir_links: list[str] = field(default_factory=list)
+    # Дополнительные документы статьи (notes.html, supplement.html, PDF): сами мы их
+    # не качаем, но появление или исчезновение документа — правка (russell-paradox
+    # win2024 -> spr2025: ссылка на новый supplement.html только в оглавлении).
+    supplements: list[str] = field(default_factory=list)
+
+    @staticmethod
+    def _sha(blocks: list[Block]) -> str:
+        return sha("\n".join(b.text for b in blocks))
 
     @property
     def body_sha(self) -> str:
-        return sha("\n".join(b.text for b in self.body))
+        return self._sha(self.body)
 
     @property
     def biblio_sha(self) -> str:
-        return sha("\n".join(b.text for b in self.biblio))
+        return self._sha(self.biblio)
 
     @property
     def apparatus_sha(self) -> str:
-        return sha("\n".join(b.text for b in self.apparatus))
+        return self._sha(self.apparatus)
+
+    @property
+    def links_sha(self) -> str | None:
+        """Хеш адресов ссылок; None, если вёрстка их не выделяет (до 2016) — тогда не сравниваем."""
+        if not (self.related_links or self.oir_links):
+            return None
+        return sha("\n".join(self.related_links) + "\n\n" + "\n".join(self.oir_links))
 
     @property
     def text_sha(self) -> str:
@@ -114,8 +138,8 @@ class Doc:
 
     @property
     def struct_sha(self) -> str:
-        """Разбиение на блоки без текста: ловит правки вроде «голый текст обернули в <p>»."""
-        return sha(" ".join(b.kind for b in self.body + self.biblio))
+        """Разбиение на блоки без текста (ловит «голый текст обернули в <p>») и набор доп. документов."""
+        return sha(" ".join(b.kind for b in self.body + self.biblio) + "\n" + "\n".join(self.supplements))
 
     @property
     def word_count(self) -> int:
@@ -236,15 +260,26 @@ def _drop_before(node: LexborNode, stop: LexborNode) -> None:
         node = node.parent
 
 
-_FOOTER_RE = re.compile(r"^copyright\s*(©|\(c\))", re.I)
+_FOOTER_RE = re.compile(r"\bcopyright\s*(©|\(c\))", re.I)
 
 
 def _cut_footer(blocks: list[Block]) -> list[Block]:
-    """Вёрстка до 2007: всё от последнего «Copyright ©» — подвал сайта (A–Z, даты, ссылки)."""
+    """Вёрстка до 2007: всё от последнего «Copyright ©» — подвал сайта (A–Z, даты, ссылки).
+
+    Подвал может приклеиться к предыдущему блоку без разделителя (frege 2002:
+    «…Frege's logic Copyright © 1995, 2002 by…»), поэтому ищем и внутри блока.
+    """
     for i in range(len(blocks) - 1, -1, -1):
-        if _FOOTER_RE.match(blocks[i].text):
-            return blocks[:i]
+        m = _FOOTER_RE.search(blocks[i].text)
+        if m:
+            head = blocks[i].text[:m.start()].strip()
+            return blocks[:i] + ([Block(blocks[i].kind, blocks[i].section, head)] if head else [])
     return blocks
+
+
+def is_related_entry(block: Block) -> bool:
+    """Блок из Related Entries (а не из Other Internet Resources)."""
+    return _heading_key(block.section) == "related entries"
 
 
 def _img_text(img: LexborNode) -> str:
@@ -252,6 +287,33 @@ def _img_text(img: LexborNode) -> str:
     src = img.attributes.get("src") or ""
     name = re.sub(r"\.\w+$", "", src.rsplit("/", 1)[-1]).lower()
     return SYMBOL_IMAGES.get(name) or f"[img:{name}]"
+
+
+_IMAGE_ONLY_RE = re.compile(r"(\[img:[^\]]*\]\s*)+")
+
+
+def _is_text(block: Block) -> bool:
+    """Блок из одних картинок (портрет в шапке и т.п.) — не текст статьи (frege sum2006 -> fall2006)."""
+    return not _IMAGE_ONLY_RE.fullmatch(block.text)
+
+
+_SUPPLEMENT_RE = re.compile(r"(?:\./)?([\w.-]+\.(?:html?|pdf))", re.I)
+
+
+def _supplements(tree: LexborHTMLParser) -> list[str]:
+    """Файлы рядом со статьёй, на которые она ссылается: <a href="notes.html#1">, "supplement.pdf"."""
+    found = set()
+    for a in tree.css("a[href]"):
+        href = (a.attributes.get("href") or "").split("#", 1)[0].split("?", 1)[0].strip()
+        m = _SUPPLEMENT_RE.fullmatch(href)
+        if m and m.group(1).lower() != "index.html":
+            found.add(m.group(1))
+    return sorted(found)
+
+
+def _norm_href(href: str) -> str:
+    # ссылки на соседние статьи внутри архива содержат издание — оно меняется каждый квартал
+    return re.sub(r"/archives/(?:spr|sum|fall|win)\d{4}/", "/archives/*/", href.strip())
 
 
 def _decode(raw: bytes) -> tuple[str, str]:
@@ -268,6 +330,7 @@ def extract(raw: bytes) -> Doc:
         n.decompose()
     for img in tree.css("img"):
         img.replace_with(_img_text(img))
+    supplements = _supplements(tree)   # до вырезания оглавления: ссылка может быть только там
 
     title_node = tree.css_first("#aueditable h1") or tree.css_first("h1")
     title = normalize(title_node.text(separator=" ")) if title_node else ""
@@ -289,10 +352,12 @@ def extract(raw: bytes) -> Doc:
         biblio = [b for b in _walk([biblio_root]) if b.kind != "heading"]
         biblio_root.decompose()
     apparatus: list[Block] = []
+    links: dict[str, list[str]] = {aid: [] for aid in APPARATUS_IDS}
     for aid in APPARATUS_IDS:
         node = tree.css_first(f"#{aid}")
         if node is not None:
             apparatus += [b for b in _walk([node]) if b.kind != "heading"]
+            links[aid] = [_norm_href(a.attributes.get("href") or "") for a in node.css("a[href]")]
             node.decompose()
 
     main = tree.css_first("#main-text")
@@ -330,7 +395,8 @@ def extract(raw: bytes) -> Doc:
     coverage = block_chars / container_chars if container_chars else 0.0
     if extractor == "fallback-body":
         walked = _cut_footer(walked)
-    body, tail_biblio, tail_apparatus = _split_by_headings(walked)
+    body, tail_biblio, tail_apparatus = _split_by_headings([b for b in walked if _is_text(b)])
 
     return Doc(extractor, encoding, title, pubinfo, revision_date, date_source,
-               body, biblio + tail_biblio, apparatus + tail_apparatus, sha(raw), coverage)
+               body, biblio + tail_biblio, apparatus + tail_apparatus, sha(raw), coverage,
+               links["related-entries"], links["other-internet-resources"], supplements)

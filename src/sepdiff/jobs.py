@@ -180,6 +180,9 @@ class Worker:
         if job.kind != SCAN:
             raise SepDiffError(f"неизвестный вид задачи: {job.kind}")
 
+        stages = {"coarse": "грубый проход", "refine": "ищу, где появилась правка",
+                  "deep": "проверяю остальные издания", "fetch": "скачиваю"}
+
         def progress(ev: ScanEvent) -> None:
             if self._stop.is_set():
                 raise Cancelled
@@ -187,10 +190,13 @@ class Worker:
                 update(lib.conn, job.id, message=f"ищу первое издание со статьёй: {ev.edition}")
             elif ev.phase == "plan":
                 update(lib.conn, job.id, done_units=0, total_units=ev.total or 0,
-                       message=f"скачиваю изданий: {ev.total}" if ev.total else "всё уже скачано")
+                       message=f"скачать изданий: до {ev.total}" if ev.total else "всё уже скачано")
+            elif ev.phase == "partial":
+                update(lib.conn, job.id, message="история предварительная — уточняю")
             else:
+                seen = "есть" if ev.status == 200 else "статьи нет"
                 update(lib.conn, job.id, done_units=ev.done, total_units=ev.total,
-                       message=f"{ev.edition}: {'есть' if ev.status == 200 else 'статьи нет'}")
+                       message=f"{stages.get(ev.phase, ev.phase)}: {ev.edition} — {seen}")
 
         requests = lib.scan(job.target, progress=progress)
         hist = lib.history(job.target)

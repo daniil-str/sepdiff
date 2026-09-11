@@ -1,6 +1,6 @@
 import pytest
 from fakes import KANT, FakeFetcher, site
-from pages import MINOR, page
+from pages import MINOR, SUBSTANTIVE, page
 from typer.testing import CliRunner
 
 from sepdiff.cli import app
@@ -21,6 +21,39 @@ def test_scan_finds_first_edition_by_bisection(lib):
     assert len([c for c in calls if "/entries/" in c]) == 7    # 4 пробы + 3 оставшихся издания
     assert len(set(calls)) == len(calls)                       # ничего не качаем дважды
     assert lib.scan("kant") == 0                               # второй раз — всё из кеша
+
+
+def _long_site() -> tuple[list[str], dict[str, bytes]]:
+    """24 издания 2000–2005; статья с 3-го, minor в 8-м, substantive в 16-м."""
+    eds = [f"{s}{y}" for y in range(2000, 2006) for s in ("spr", "sum", "fall", "win")]
+    versions = {}
+    for i, ed in enumerate(eds[2:], 2):
+        variant = SUBSTANTIVE if i >= 15 else MINOR if i >= 7 else {}
+        versions[ed] = page(**{**variant, "nav": ed})   # вёрстка меняется в каждом издании
+    pages = site({"kant": versions})
+    pages["/archives/"] = "".join(f'<a href="{e}/">{e}</a>' for e in eds).encode()
+    return eds, pages
+
+
+def test_quick_scan_finds_every_revision_with_few_requests(tmp_path):
+    eds, pages = _long_site()
+    events: list[str] = []
+    with Library(tmp_path, fetcher=FakeFetcher(pages)) as lib:  # type: ignore[arg-type]
+        lib.init_editions()
+        n = lib.scan("kant", deep=False, progress=lambda ev: events.append(ev.phase))
+        hist = lib.history("kant")
+        assert [(r.edition.slug, r.kind) for r in hist.revisions if r.kind != "markup_only"] == [
+            (eds[2], "created"), (eds[7], "minor"), (eds[15], "substantive")]
+        assert n < 22 - 5                           # заметно меньше, чем все издания подряд
+        assert "partial" in events and "deep" not in events
+        assert lib.conn.execute("SELECT scan_state FROM entries WHERE slug = 'kant'").fetchone()[0] == "partial"
+        quick = [(r.edition.slug, r.kind) for r in hist.revisions]
+
+        lib.scan("kant")                              # доводим до полного: те же правки
+        full = lib.history("kant")
+        assert [(r.edition.slug, r.kind) for r in full.revisions if r.kind != "markup_only"] == [
+            (s, k) for s, k in quick if k != "markup_only"]
+        assert full.unchecked_after == 0 and all(r.unchecked_before == 0 for r in full.revisions)
 
 
 def test_history(lib):
@@ -50,10 +83,25 @@ def test_diff(lib):
 
 
 def test_unknown_entry(lib):
-    with pytest.raises(SepDiffError, match="нет в последнем издании"):
+    with pytest.raises(SepDiffError, match="нет ни в одном"):
         lib.scan("no-such-entry")
     with pytest.raises(SepDiffError):
         lib.scan("../etc")
+
+
+def test_entry_gone_from_latest_edition(tmp_path):
+    """Статьи нет в последнем издании (удалена/переименована): история всё равно строится."""
+    eds, _ = _long_site()
+    versions = {ed: page(**({"lived": "spent"} if i >= 6 else {})) for i, ed in enumerate(eds[3:11], 3)}
+    pages = site({"gone": versions})
+    pages["/archives/"] = "".join(f'<a href="{e}/">{e}</a>' for e in eds).encode()
+    with Library(tmp_path, fetcher=FakeFetcher(pages)) as lib:  # type: ignore[arg-type]
+        lib.init_editions()
+        lib.scan("gone")
+        revs = [(r.edition.slug, r.kind) for r in lib.history("gone").revisions]
+        assert revs == [(eds[3], "created"), (eds[6], "minor"), (eds[11], "removed")]
+        fetched = {c.split("/")[2] for c in lib.fetcher.calls if "/entries/" in c}
+        assert set(eds[3:12]) <= fetched and eds[20] not in fetched   # хвост после удаления не качаем подряд
 
 
 def test_removed_entry(tmp_path):

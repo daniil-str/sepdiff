@@ -27,7 +27,7 @@ PAGE = """<!DOCTYPE html><html><head><title>Kant (SEP)</title>
     <ul><li>Allison, H., 2004, <em>Kant{apos}s Transcendental Idealism</em>.</li>
         <li>Guyer, P., 1987, <em>Kant and the Claims of Knowledge</em>.</li>{extra_bib}</ul></div>
    <div id="academic-tools"><h2>Academic Tools</h2><p>How to cite this entry.</p></div>
-   <div id="other-internet-resources"><h2>Other Internet Resources</h2><p>Links.</p></div>
+   <div id="other-internet-resources"><h2>Other Internet Resources</h2><p>Links.</p>{extra_oir}</div>
    <div id="related-entries"><h2>Related Entries</h2><p>Hume, David</p>{extra_rel}</div>
    {ack}
   </div>
@@ -39,7 +39,7 @@ BASE = dict(
     nav="", rev="Tue Jul 28, 2020", dash="–", o="ö", lived="lived",
     q_open="“", q_close="”", ws="", apos="’",
     extra_para="", deleted_para="<p>A paragraph that will be removed later.</p>",
-    extra_bib="", extra_rel="", ack="",
+    extra_bib="", extra_rel="", extra_oir="", ack="",
 )
 
 # Только вёрстка/типографика: другая навигация, прямые кавычки, &nbsp;. Текст тот же.

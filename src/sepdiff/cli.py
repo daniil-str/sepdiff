@@ -98,25 +98,41 @@ def fetch(
     slug: str,
     edition: Annotated[list[str] | None, typer.Option(
         "--edition", "-e", help="Скачать только эти издания (можно повторять). Без опции — все.")] = None,
+    quick: Annotated[bool, typer.Option(
+        "--quick", "-q", help="Только найти правки: не проверять издания между одинаковыми снимками.")] = False,
 ) -> None:
     """Скачать снимки статьи из архива SEP и построить её историю.
 
-    Уже скачанное не перекачивается никогда. Запросы идут не чаще раза в 5 с
-    (robots.txt SEP), так что полная история статьи — до ~10 минут.
+    Сначала редкие издания и бинарный поиск мест, где текст менялся (история
+    готова за пару минут), потом проверка остальных изданий. Уже скачанное не
+    перекачивается никогда. Запросы — не чаще раза в 5 с (robots.txt SEP).
     """
+    stages = {
+        "coarse": "Грубый проход: каждое 8-е издание",
+        "refine": "Уточнение: в каком издании появилась каждая правка",
+        "deep": "Проверка остальных изданий",
+    }
+    shown: set[str] = set()
+
     def progress(ev: ScanEvent) -> None:
         if ev.phase == "plan":
             if ev.total:
                 minutes = ev.total * SECONDS_PER_REQUEST / 60
-                typer.echo(f"Нужно скачать {_editions_word(ev.total)}, ~{minutes:.0f} мин. "
+                typer.echo(f"Осталось скачать до {_editions_word(ev.total)}, до ~{minutes:.0f} мин. "
                            "Ctrl+C можно нажать в любой момент — скачанное сохранится.")
             return
-        where = f"[{ev.done}/{ev.total}]" if ev.phase == "fetch" else "[поиск]"
+        if ev.phase == "partial":
+            typer.secho(f"  … история пересчитана — уже можно смотреть: sepdiff log {slug}", dim=True)
+            return
+        if ev.phase in stages and ev.phase not in shown:
+            shown.add(ev.phase)
+            typer.secho(stages[ev.phase], bold=True)
+        where = f"[{ev.done}/{ev.total}]" if ev.total is not None else "[поиск]"
         status = typer.style("есть", fg="green") if ev.status == 200 else typer.style("нет (404)", dim=True)
-        typer.echo(f"{where:>10} {ev.edition:9s} {status}")
+        typer.echo(f"{where:>10} {ev.edition or '':9s} {status}")
 
     with _library() as lib:
-        n = lib.scan(slug, edition, progress)
+        n = lib.scan(slug, edition, progress, deep=not quick)
         hist = lib.history(slug)
         real = sum(1 for r in hist.revisions if r.kind != "markup_only")
         typer.echo(f"Запросов: {n}. Снимков: {hist.snapshots}, ревизий: {real} "

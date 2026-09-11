@@ -27,6 +27,7 @@ from .normalize import normalize
 SLUG_RE = re.compile(r"[a-z0-9][a-z0-9.-]*")
 _IMPORT_RE = re.compile(r"([a-z0-9][a-z0-9.-]*)\.((?:spr|sum|fall|win)\d{4})\.(html|404)")
 _NOT_ENTRIES = {"contents", "archives", "report"}   # служебные файлы в кеше спайка
+COARSE_STEP = 8   # грубый проход: каждое 8-е издание, примерно раз в два года
 
 
 class SepDiffError(Exception):
@@ -35,7 +36,9 @@ class SepDiffError(Exception):
 
 @dataclass
 class ScanEvent:
-    phase: str               # probe (ищем первое издание) | plan | fetch
+    # probe | coarse | refine | deep | fetch (издания из -e) — скачан снимок;
+    # plan — известно, сколько качать (total); partial — история пересчитана
+    phase: str
     edition: str | None = None
     status: int | None = None
     done: int = 0
@@ -58,6 +61,7 @@ class Snap:
     biblio_sha: str | None = None
     apparatus_sha: str | None = None
     struct_sha: str | None = None
+    links_sha: str | None = None
     title: str | None = None
     revision_date: str | None = None
     date_source: str | None = None
@@ -120,7 +124,7 @@ def _doc_fields(doc: Doc) -> dict[str, object]:
     return {
         "raw_sha": doc.raw_sha, "text_sha": doc.text_sha, "body_sha": doc.body_sha,
         "biblio_sha": doc.biblio_sha, "apparatus_sha": doc.apparatus_sha,
-        "struct_sha": doc.struct_sha, "title": doc.title or None,
+        "struct_sha": doc.struct_sha, "links_sha": doc.links_sha, "title": doc.title or None,
         "revision_date": doc.revision_date, "date_source": doc.date_source,
         "word_count": doc.word_count, "coverage": doc.coverage,
         "extractor": doc.extractor, "extract_version": EXTRACT_VERSION,
@@ -307,58 +311,133 @@ class Library:
             raise FetchError(f"{r.url}: HTTP {r.status}")
         return r.status
 
-    def scan(self, slug: str, only: list[str] | None = None, progress: Progress | None = None) -> int:
+    def scan(self, slug: str, only: list[str] | None = None, progress: Progress | None = None,
+             deep: bool = True) -> int:
         """Скачать недостающие снимки статьи и пересчитать историю. Возвращает число запросов.
 
-        Без `only` — полное сканирование: сперва последнее издание, потом
-        бинарный поиск первого издания со статьёй (~7 запросов вместо десятков
-        404), потом всё от первого до последнего. Предполагается, что статья,
-        раз появившись, из архива не пропадает; пропуски всё равно видны как 404.
+        Без `only` — по фазам (PLAN.md §4.2); история пересчитывается после
+        каждой, так что её можно показывать, не дожидаясь конца:
+
+          probe   последнее издание (заодно проверка slug) и бинарный поиск
+                  первого издания со статьёй (~7 запросов вместо десятков 404);
+          coarse  каждое COARSE_STEP-е издание — скелет истории за ~минуту;
+          refine  между соседними скачанными снимками с разным содержимым —
+                  бинарный поиск издания, где оно поменялось, для каждой правки;
+          deep    всё остальное: проверка, что между одинаковыми снимками правок
+                  не было (правка и откат). deep=False — пропустить.
+
+        Предполагается, что статья, раз появившись, из архива не пропадает;
+        пропуски всё равно видны как 404 в deep-фазе.
         """
         report = progress or (lambda _e: None)
         self._ensure_entry(slug)
         eds = self.ensure_editions()
         known = self._statuses(slug)
-        requests = 0
+        requests = done = 0
+        total: int | None = None
+        rebuilt_at = -1
 
-        def status(ed: Edition, event: ScanEvent) -> int:
-            nonlocal requests
+        def fetch(ed: Edition, phase: str) -> int:
+            nonlocal requests, done
             if ed.slug not in known:
                 known[ed.slug] = self._fetch_snapshot(slug, ed.slug)
                 requests += 1
-                event.edition, event.status = ed.slug, known[ed.slug]
-                report(event)
+                done += total is not None
+                report(ScanEvent(phase, ed.slug, known[ed.slug], done, total))
             return known[ed.slug]
+
+        def checkpoint() -> None:
+            nonlocal rebuilt_at
+            if requests != rebuilt_at:
+                self.rebuild(slug)
+                rebuilt_at = requests
+                report(ScanEvent("partial"))
 
         if only:
             targets = [self._edition(s) for s in only]
+            total = sum(1 for e in targets if e.slug not in known)
+            report(ScanEvent("plan", total=total))
+            for ed in targets:
+                fetch(ed, "fetch")
         else:
-            last = len(eds) - 1
-            if status(eds[last], ScanEvent("probe")) != 200:
-                raise SepDiffError(
-                    f"статьи {slug!r} нет в последнем издании {eds[last].slug}. Опечатка в slug "
-                    f"(поиск: sepdiff search) или статья удалена — тогда укажите издания явно: -e fall2010")
-            lo, hi = 0, last
-            while lo < hi:
-                mid = (lo + hi) // 2
-                if status(eds[mid], ScanEvent("probe")) == 200:
-                    hi = mid
-                else:
-                    lo = mid + 1
-            targets = eds[lo:]
+            first, last = self._locate(eds, lambda ed: fetch(ed, "probe"))
+            if first is None:
+                raise SepDiffError(f"статьи {slug!r} нет ни в одном из проверенных изданий — опечатка в slug? "
+                                   "(поиск: sepdiff search)")
+            # статья удалена или переименована (SEP не делает редиректов) — берём и
+            # следующее издание с 404, чтобы в истории была ревизия «удалена»
+            span = eds[first:min(last + 2, len(eds))]
+            total = sum(1 for e in span if e.slug not in known)   # при deep=False — верхняя граница
+            report(ScanEvent("plan", total=total))
+            for ed in span[::COARSE_STEP]:
+                fetch(ed, "coarse")
+            self._mark_scanned(slug, "partial")
+            checkpoint()
+            self._refine(slug, span, known, fetch)
+            checkpoint()
+            if deep:
+                for ed in span:
+                    fetch(ed, "deep")
 
-        todo = [e for e in targets if e.slug not in known]
-        report(ScanEvent("plan", total=len(todo)))
-        for i, ed in enumerate(todo, 1):
-            status(ed, ScanEvent("fetch", done=i, total=len(todo)))
+        self._mark_scanned(slug, "complete" if deep and not only else "partial")
+        self.rebuild(slug)
+        return requests
 
-        state = "partial" if only else "complete"
+    @staticmethod
+    def _locate(eds: list[Edition], status: Callable[[Edition], int]) -> tuple[int | None, int]:
+        """(первое, последнее) издание со статьёй — бинарным поиском, ~2·log2(N) запросов.
+
+        Обычно статья есть в последнем издании. Если нет (удалена или
+        переименована — SEP не делает редиректов), идём назад шагом COARSE_STEP,
+        пока не найдём издание со статьёй. Считается, что статья присутствует
+        в архиве одним непрерывным отрезком изданий.
+        """
+        n = len(eds)
+        found = next((i for i in range(n - 1, -1, -COARSE_STEP) if status(eds[i]) == 200), None)
+        if found is None:
+            return None, -1
+        lo, hi = 0, found                     # первое издание со статьёй
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if status(eds[mid]) == 200:
+                hi = mid
+            else:
+                lo = mid + 1
+        first = lo
+        lo, hi = found, n - 1                 # последнее
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if status(eds[mid]) == 200:
+                lo = mid
+            else:
+                hi = mid - 1
+        return first, lo
+
+    def _mark_scanned(self, slug: str, state: str) -> None:
         with self.conn:
             self.conn.execute(
                 "UPDATE entries SET scan_state = CASE WHEN scan_state = 'complete' THEN 'complete' ELSE ? END, "
                 "last_scanned_at = ? WHERE slug = ?", (state, _now(), slug))
-        self.rebuild(slug)
-        return requests
+
+    def _signature(self, slug: str, edition: str) -> tuple[object, ...]:
+        """Всё, по чему classify отличает снимки, кроме сырого HTML (вёрстку сайта не ищем)."""
+        row = self.conn.execute(
+            "SELECT http_status, text_sha, apparatus_sha, struct_sha, links_sha, revision_date FROM snapshots "
+            "WHERE entry_slug = ? AND edition_slug = ?", (slug, edition)).fetchone()
+        return tuple(row)
+
+    def _refine(self, slug: str, span: list[Edition], known: dict[str, int],
+                fetch: Callable[[Edition, str], int]) -> None:
+        """Между соседними скачанными снимками с разным содержимым — бинарный поиск точек правок."""
+        have = sorted(i for i, e in enumerate(span) if e.slug in known)
+        stack = list(reversed(list(zip(have, have[1:]))))
+        while stack:
+            i, j = stack.pop()
+            if j - i < 2 or self._signature(slug, span[i].slug) == self._signature(slug, span[j].slug):
+                continue
+            m = (i + j) // 2
+            fetch(span[m], "refine")
+            stack += [(m, j), (i, m)]   # сначала левая половина — правки находятся по порядку
 
     def import_dir(self, directory: Path) -> dict[str, int]:
         """Импорт файлов <slug>.<edition>.html / .404 (например, кеш спайка) без сети."""
@@ -428,6 +507,9 @@ class Library:
                                   PairStats(words_added=s.word_count or 0)))
             else:
                 kind = classify(prev, s)
+                if kind == "minor" and prev.text_sha == s.text_sha and prev.struct_sha == s.struct_sha:
+                    # правка только в ссылках: «вычистили мёртвые» от правки по хешам не отличить
+                    kind = classify(self._doc(prev.blob_sha), self._doc(s.blob_sha))  # type: ignore[arg-type]
                 if kind != "identical":
                     stats = PairStats() if kind == "markup_only" else self._pair_stats(prev, s)
                     revisions.append((s.edition_slug, prev.edition_slug, kind, stats))
@@ -528,7 +610,7 @@ class Library:
         body = block_diff(da.body, db_.body)
         biblio = block_diff(da.biblio, db_.biblio)
         apparatus = block_diff(da.apparatus, db_.apparatus)
-        return PairDiff(slug, db_.title or slug, Edition.parse(a), Edition.parse(b), classify(sa, sb),
+        return PairDiff(slug, db_.title or slug, Edition.parse(a), Edition.parse(b), classify(da, db_),
                         pair_stats(body, biblio, apparatus), body, biblio, apparatus)
 
     def show(self, slug: str, edition: str) -> Doc:

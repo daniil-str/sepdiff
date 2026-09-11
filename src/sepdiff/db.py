@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 -- квартальные издания SEP, по порядку выхода
@@ -83,6 +83,7 @@ CREATE TABLE jobs (
 # Миграция на версию N — скрипт MIGRATIONS[N]; SCHEMA — версия 1.
 MIGRATIONS = {
     2: "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);",   # seeded_at и т.п.
+    3: "ALTER TABLE snapshots ADD COLUMN links_sha TEXT;",   # адреса ссылок apparatus (вёрстка 2016+)
 }
 
 

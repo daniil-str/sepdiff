@@ -30,5 +30,9 @@
   {% endif %}
 </section>
 
-<div id="history">{% include "_history.html" %}</div>
+{# Пока идёт сканирование, история пересчитывается после каждой фазы — подтягиваем её. #}
+<div id="history"{% if job %} hx-get="/e/{{ slug }}/history{% if show_all %}?all=1{% endif %}" hx-trigger="every 10s"{% endif %}>
+  {% if job and hist %}<p class="muted">История предварительная: сканирование ещё идёт, «не проверено» — издания, которые пока не скачаны.</p>{% endif %}
+  {% include "_history.html" %}
+</div>
 {% endblock %}
