@@ -1,0 +1,46 @@
+{% if hist %}
+<form action="/e/{{ slug }}/diff" method="get" class="history">
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th class="pick" title="было">A</th><th class="pick" title="стало">B</th>
+        <th>издание</th><th>правка</th><th>объём</th><th class="secs">разделы</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for row in rows %}
+      {% if row.gap %}
+      <tr class="gap"><td colspan="7">┆ {{ row.text }}</td></tr>
+      {% else %}
+      {% set r = row.rev %}
+      <tr class="rev {{ r.kind }}">
+        <td class="pick"><input type="radio" name="a" value="{{ r.edition.slug }}" aria-label="было: {{ r.edition.label }}"></td>
+        <td class="pick"><input type="radio" name="b" value="{{ r.edition.slug }}" aria-label="стало: {{ r.edition.label }}"></td>
+        <td class="ed"><span class="mark {{ r.kind }}">{{ KIND_MARK[r.kind] }}</span> {{ r.edition.label }}
+          <span class="muted">{{ r.edition.slug }}</span></td>
+        <td><span class="kind {{ r.kind }}" title="{{ KIND_HINT[r.kind] }}">{{ KIND_LABEL[r.kind] }}</span></td>
+        <td class="num">{{ row.stats }}{% if r.suspect %} <span class="err" title="объём текста скачет больше чем вдвое — возможна ошибка разбора">⚠</span>{% endif %}</td>
+        <td class="secs">{% for s in r.stats.sections[:3] %}<span class="chip" title="{{ s }}">{{ s }}</span>{% endfor %}{% if r.stats.sections | length > 3 %}<span class="muted"> +{{ r.stats.sections | length - 3 }}</span>{% endif %}</td>
+        <td class="act">
+          {% if r.kind in TEXT_KINDS or (r.kind == "markup_only" and r.prev_edition) %}<a href="/e/{{ slug }}/diff?b={{ r.edition.slug }}">diff</a>
+          {% elif r.kind == "created" %}<a href="/e/{{ slug }}/v/{{ r.edition.slug }}">текст</a>{% endif %}
+        </td>
+      </tr>
+      {% endif %}
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <div class="actions">
+    <button>Сравнить A и B</button>
+    {% if show_all %}
+      <a href="/e/{{ slug }}" hx-get="/e/{{ slug }}/history" hx-target="#history" hx-push-url="/e/{{ slug }}">скрыть правки только вёрстки</a>
+    {% elif hidden %}
+      <a href="/e/{{ slug }}?all=1" hx-get="/e/{{ slug }}/history?all=1" hx-target="#history" hx-push-url="/e/{{ slug }}?all=1">показать и правки только вёрстки ({{ hidden }})</a>
+    {% endif %}
+  </div>
+</form>
+{% elif not job %}
+<p class="muted">История ещё не построена.</p>
+{% endif %}

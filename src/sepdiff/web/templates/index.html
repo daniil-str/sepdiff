@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block main %}
+<form class="search" action="/" method="get" role="search">
+  <input type="search" name="q" value="{{ q }}" autofocus autocomplete="off"
+         placeholder="Статья SEP: название или slug — kant, modal logic…"
+         hx-get="/search" hx-trigger="input changed delay:300ms, search" hx-target="#results">
+  <noscript><button>Найти</button></noscript>
+</form>
+
+<div id="results">{% include "_results.html" %}</div>
+
+{% if recent %}
+<h2>Статьи с историей</h2>
+<ul class="entries">
+  {% for e in recent %}
+  <li>
+    <a href="/e/{{ e.slug }}">{{ e.title or e.slug }}</a> <code>{{ e.slug }}</code>
+    <span class="muted">· ревизий с правками: {{ e.revisions }}{% if e.scan_state != "complete" %} · история неполная{% endif %}</span>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}{{ title or slug }} — SEPDiff{% endblock %}
+{% block head %}{% if job %}<noscript><meta http-equiv="refresh" content="5"></noscript>{% endif %}{% endblock %}
+{% block main %}
+<h1>{{ title or slug }}</h1>
+<div class="meta">
+  <code>{{ slug }}</code>
+  · <a href="https://plato.stanford.edu/entries/{{ slug }}/" rel="noopener noreferrer">на сайте SEP ↗</a>
+  {% if hist %}
+  · снимков {{ hist.snapshots }} из {{ hist.editions }} изданий
+  {% set diffs = hist.revisions | selectattr("kind", "in", TEXT_KINDS) | list %}
+  {% if diffs %}· <a href="/e/{{ slug }}/diff">последняя правка</a>{% endif %}
+  {% endif %}
+</div>
+
+<section id="scan" class="scan">
+  {% if job %}
+    {% include "_progress.html" %}
+  {% else %}
+    {% if last_job and last_job.state == "error" %}<p class="err">Последнее сканирование не удалось: {{ last_job.message }}</p>{% endif %}
+    <form method="post" action="/e/{{ slug }}/scan" hx-post="/e/{{ slug }}/scan" hx-target="#scan">
+      {% if hist %}
+      <button class="secondary">Докачать новые издания</button>
+      <span class="muted">скачанное не перекачивается</span>
+      {% else %}
+      <button>Построить историю</button>
+      <span class="muted">до ~10 минут: SEP разрешает 1 запрос в 5 секунд. Страницу можно закрыть — работа продолжится.</span>
+      {% endif %}
+    </form>
+  {% endif %}
+</section>
+
+<div id="history">{% include "_history.html" %}</div>
+{% endblock %}

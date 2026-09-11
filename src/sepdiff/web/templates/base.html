@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}SEPDiff{% endblock %}</title>
+<link rel="stylesheet" href="/static/style.css?v={{ css_version }}">
+<script src="{{ htmx_src }}" defer></script>
+{% block head %}{% endblock %}
+</head>
+<body>
+<header class="top">
+  <a href="/" class="brand">SEP<span>Diff</span></a>
+  <span class="tagline">история правок Stanford Encyclopedia of Philosophy</span>
+</header>
+<main>
+{% block main %}{% endblock %}
+</main>
+<footer>Тексты статей — © их авторов и SEP. Локальная копия, только для чтения.</footer>
+</body>
+</html>

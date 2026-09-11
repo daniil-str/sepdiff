@@ -11,7 +11,7 @@ import re
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field, fields
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from selectolax.lexbor import LexborHTMLParser
@@ -145,6 +145,7 @@ class Library:
         self._own_fetcher = fetcher is None
         self._docs: dict[str, Doc] = {}
         self._editions: list[Edition] | None = None
+        self._editions_checked = False
 
     @property
     def fetcher(self) -> Fetcher:
@@ -182,6 +183,19 @@ class Library:
                 [(e.slug, e.season, e.year, e.released_on.isoformat(), i) for i, e in enumerate(eds)],
             )
         self._editions = None
+        self._editions_checked = True
+        return eds
+
+    def ensure_editions(self) -> list[Edition]:
+        """Список изданий; загрузить, если его нет, и обновить, если пора выйти новому (раз в квартал)."""
+        try:
+            eds = self.editions()
+        except SepDiffError:
+            self.init_editions()
+            return self.editions()
+        if not self._editions_checked and (date.today() - eds[-1].released_on).days > 92:
+            self.init_editions()
+            eds = self.editions()
         return eds
 
     def editions(self) -> list[Edition]:
@@ -203,7 +217,7 @@ class Library:
 
     def seed(self) -> int:
         """Оглавление последнего издания -> таблица entries (1 запрос). Возвращает число статей."""
-        latest = self.editions()[-1]
+        latest = self.ensure_editions()[-1]
         r = self.fetcher.get(f"/archives/{latest.slug}/contents.html")
         if r.status != 200:
             raise FetchError(f"оглавление {latest.slug}: HTTP {r.status}")
@@ -218,15 +232,44 @@ class Library:
                 "ON CONFLICT(slug) DO UPDATE SET title = COALESCE(entries.title, excluded.title)",
                 list(found.items()),
             )
+            self.conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('seeded_at', ?)", (_now(),))
         return len(found)
+
+    def has_index(self) -> bool:
+        """Загружено ли оглавление SEP (sepdiff seed) — без него поиск только по скачанным статьям."""
+        return self.conn.execute("SELECT 1 FROM meta WHERE key = 'seeded_at'").fetchone() is not None
 
     def search(self, query: str, limit: int = 20) -> list[tuple[str, str | None]]:
         like = f"%{query.lower()}%"
         rows = self.conn.execute(
-            "SELECT slug, title FROM entries WHERE slug LIKE ? OR lower(title) LIKE ? ORDER BY slug LIMIT ?",
-            (like, like, limit),
+            "SELECT slug, title FROM entries WHERE slug LIKE ? OR lower(title) LIKE ? "
+            "ORDER BY slug NOT LIKE ?, slug LIMIT ?",
+            (like, like, f"{query.lower()}%", limit),
         ).fetchall()
         return [(r["slug"], r["title"]) for r in rows]
+
+    def scanned_slugs(self) -> set[str]:
+        return {r[0] for r in self.conn.execute("SELECT DISTINCT entry_slug FROM snapshots")}
+
+    def entry_title(self, slug: str) -> str | None:
+        row = self.conn.execute("SELECT title FROM entries WHERE slug = ?", (slug,)).fetchone()
+        return row["title"] if row else None
+
+    def recent_entries(self, limit: int = 20) -> list[dict[str, object]]:
+        """Статьи со скачанной историей, последние отсканированные сверху."""
+        rows = self.conn.execute(
+            "SELECT e.slug, e.title, e.last_scanned_at, e.scan_state, "
+            "(SELECT count(*) FROM revisions r WHERE r.entry_slug = e.slug "
+            " AND r.kind IN ('substantive', 'minor', 'changed')) AS revisions "
+            "FROM entries e WHERE EXISTS (SELECT 1 FROM snapshots s WHERE s.entry_slug = e.slug) "
+            "ORDER BY e.last_scanned_at DESC, e.slug LIMIT ?", (limit,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def snapshot_editions(self, slug: str) -> list[Edition]:
+        """Издания, в которых статья скачана и есть (HTTP 200), по порядку выхода."""
+        have = {r[0] for r in self.conn.execute(
+            "SELECT edition_slug FROM snapshots WHERE entry_slug = ? AND http_status = 200", (slug,))}
+        return [e for e in self.editions() if e.slug in have]
 
     # ------------------------------------------------------------------
     # Сканирование
@@ -274,7 +317,7 @@ class Library:
         """
         report = progress or (lambda _e: None)
         self._ensure_entry(slug)
-        eds = self.editions()
+        eds = self.ensure_editions()
         known = self._statuses(slug)
         requests = 0
 

@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}: {{ a }} → {{ b }} — SEPDiff{% endblock %}
+{% block main %}
+<h1><a href="/e/{{ slug }}" class="plain">{{ title }}</a></h1>
+<form class="pick-editions" action="/e/{{ slug }}/diff" method="get"
+      hx-get="/e/{{ slug }}/diff/pane" hx-target="#pane" hx-trigger="change">
+  <label>было
+    <select name="a">
+      {% for e in editions %}<option value="{{ e.slug }}"{% if e.slug == a %} selected{% endif %}>{{ e.label }}</option>{% endfor %}
+    </select>
+  </label>
+  <span class="arrow">→</span>
+  <label>стало
+    <select name="b">
+      {% for e in editions %}<option value="{{ e.slug }}"{% if e.slug == b %} selected{% endif %}>{{ e.label }}</option>{% endfor %}
+    </select>
+  </label>
+  <noscript><button>Сравнить</button></noscript>
+  <a href="/e/{{ slug }}" class="back">← история</a>
+</form>
+<div id="pane">{% include "_pane.html" %}</div>
+{% endblock %}

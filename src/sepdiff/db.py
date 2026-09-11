@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 -- квартальные издания SEP, по порядку выхода
@@ -80,8 +80,16 @@ CREATE TABLE jobs (
 """
 
 
+# Миграция на версию N — скрипт MIGRATIONS[N]; SCHEMA — версия 1.
+MIGRATIONS = {
+    2: "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);",   # seeded_at и т.п.
+}
+
+
 def connect(path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(path)
+    # Веб открывает соединение на запрос, а FastAPI может выполнить зависимость
+    # и обработчик в разных потоках пула; одновременно соединением пользуется один.
+    conn = sqlite3.connect(path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
@@ -95,5 +103,9 @@ def migrate(conn: sqlite3.Connection) -> None:
         raise RuntimeError(f"база новее программы (схема {version} > {SCHEMA_VERSION})")
     if version == 0:
         conn.executescript(SCHEMA)
-        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-        conn.commit()
+        version = 1
+    for v in range(version + 1, SCHEMA_VERSION + 1):
+        conn.executescript(MIGRATIONS[v])
+        version = v
+    conn.execute(f"PRAGMA user_version = {version}")
+    conn.commit()

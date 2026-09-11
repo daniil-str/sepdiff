@@ -1,0 +1,20 @@
+<div class="job job-{{ job.state }}" id="job-{{ job.id }}"
+  {% if job.active %}hx-get="/jobs/{{ job.id }}/progress" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+  {% if job.state == "queued" %}
+    <span class="spinner"></span> В очереди{% if position %}, перед ней задач: {{ position }}{% endif %}…
+    {% if job.message %}<div class="muted">{{ job.message }}</div>{% endif %}
+  {% elif job.state == "running" %}
+    {% if job.total_units %}
+      <progress value="{{ job.done_units }}" max="{{ job.total_units }}"></progress>
+      <span>{{ job.done_units }} / {{ job.total_units }}</span>
+      {% if job.eta_seconds %}<span class="muted">· осталось {{ job.eta_seconds | eta }}</span>{% endif %}
+    {% else %}
+      <progress></progress>
+    {% endif %}
+    <div class="muted">{{ job.message or "начинаю…" }} · SEP разрешает 1 запрос в 5 секунд</div>
+  {% elif job.state == "done" %}
+    ✓ Готово: {{ job.message }}
+  {% else %}
+    <span class="err">Ошибка: {{ job.message }}</span>
+  {% endif %}
+</div>

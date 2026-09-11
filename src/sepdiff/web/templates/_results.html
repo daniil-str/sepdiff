@@ -1,0 +1,28 @@
+{% if q %}
+  {% if results %}
+  <ul class="entries">
+    {% for r in results %}
+    <li><a href="/e/{{ r.slug }}">{{ r.title or r.slug }}</a> <code>{{ r.slug }}</code>
+      {% if r.scanned %}<span class="badge">история есть</span>{% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% elif seeded %}
+  <p class="muted">Ничего не нашлось.</p>
+  {% endif %}
+  {% if slug_guess %}
+  <p>Открыть статью по slug: <a href="/e/{{ slug_guess }}"><code>{{ slug_guess }}</code></a></p>
+  {% endif %}
+{% endif %}
+{% if not seeded %}
+<div class="notice">
+  Оглавление SEP не загружено — поиск по названиям не работает, но статью можно открыть по slug
+  (как в адресе <code>plato.stanford.edu/entries/<b>kant</b>/</code>).
+  {% if seed_job %}
+    {% with job=seed_job, position=0 %}{% include "_progress.html" %}{% endwith %}
+  {% else %}
+  <form method="post" action="/seed" hx-post="/seed" hx-swap="outerHTML">
+    <button>Загрузить оглавление</button> <span class="muted">1–2 запроса к SEP</span>
+  </form>
+  {% endif %}
+</div>
+{% endif %}

@@ -1,4 +1,4 @@
-"""Командная строка: sepdiff init / seed / search / fetch / log / diff / show / import."""
+"""Командная строка: sepdiff init / seed / search / fetch / log / diff / show / import / serve."""
 
 from __future__ import annotations
 
@@ -12,6 +12,10 @@ import typer
 
 from .diffing import Op, word_ops
 from .fetcher import FetchError
+from .present import editions_word as _editions_word
+from .present import gap_texts
+from .present import plural as _plural
+from .present import stats_line as _stats_line
 from .service import History, Library, PairDiff, ScanEvent, SepDiffError
 
 app = typer.Typer(
@@ -55,18 +59,6 @@ def _library() -> Iterator[Library]:
         raise typer.Exit(130) from None
     finally:
         lib.close()
-
-
-def _plural(n: int, one: str, few: str, many: str) -> str:
-    if n % 10 == 1 and n % 100 != 11:
-        return one
-    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
-        return few
-    return many
-
-
-def _editions_word(n: int) -> str:
-    return f"{n} {_plural(n, 'издание', 'издания', 'изданий')}"
 
 
 # ----------------------------------------------------------------------
@@ -142,26 +134,10 @@ def import_(directory: Path) -> None:
             typer.echo("Подходящих файлов не найдено.")
 
 
-def _stats_line(kind: str, st) -> str:  # type: ignore[no-untyped-def]
-    if kind == "created":
-        return f"{st.words_added:,} слов"
-    if kind in ("markup_only", "removed"):
-        return ""
-    changed = st.words_added or st.words_removed or st.blocks_changed
-    parts = [f"+{st.words_added:,} / −{st.words_removed:,}" if changed else "текст тот же"]
-    if st.biblio_added or st.biblio_removed or st.biblio_modified:
-        parts.append(f"библ. +{st.biblio_added} −{st.biblio_removed} ~{st.biblio_modified}")
-    if st.apparatus_changed:
-        parts.append(f"ссылки: {st.apparatus_changed}")
-    return " · ".join(parts)
-
-
 def _gap_lines(unchanged: int, unchecked: int) -> None:
-    if unchanged:
-        typer.secho(f"  ┆ {_editions_word(unchanged)} без изменений", dim=True)
-    if unchecked:
-        verb = _plural(unchecked, "не скачано", "не скачаны", "не скачано")
-        typer.secho(f"  ┆ {_editions_word(unchecked)} {verb} — не проверено", fg="yellow", dim=True)
+    for i, text in enumerate(gap_texts(unchanged, unchecked)):
+        unchecked_line = i == 1 or not unchanged
+        typer.secho(f"  ┆ {text}", fg="yellow" if unchecked_line else None, dim=True)
 
 
 def _print_log(hist: History, show_all: bool) -> None:
@@ -314,6 +290,23 @@ def show(slug: str, edition: str) -> None:
                 typer.secho(f"── {name} ──", bold=True)
                 for blk in blocks:
                     typer.echo(f"• {blk.text}")
+
+
+@app.command()
+def serve(
+    host: Annotated[str, typer.Option(help="Адрес. По умолчанию — только этот компьютер.")] = "127.0.0.1",
+    port: Annotated[int, typer.Option(help="Порт.")] = 8000,
+) -> None:
+    """Веб-интерфейс: поиск, история, diff; сканирование идёт в фоне."""
+    import uvicorn
+
+    from .web.app import create_app
+
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        typer.secho("Внимание: сервер будет виден из сети. Тексты SEP под копирайтом — не публикуйте их.",
+                    fg="yellow")
+    typer.echo(f"SEPDiff: http://{'localhost' if host == '127.0.0.1' else host}:{port}/  (Ctrl+C — остановить)")
+    uvicorn.run(create_app(), host=host, port=port, log_level="warning")
 
 
 if __name__ == "__main__":
