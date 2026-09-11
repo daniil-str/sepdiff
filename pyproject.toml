@@ -1,17 +1,26 @@
 [project]
 name = "sepdiff"
 version = "0.1.0"
-description = "Add your description here"
+description = "Edit history of Stanford Encyclopedia of Philosophy entries, like git log"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "httpx>=0.28.1",
     "selectolax>=0.4.11",
+    "typer>=0.27.2",
 ]
 
 [project.scripts]
-sepdiff = "sepdiff:main"
+sepdiff = "sepdiff.cli:app"
 
 [build-system]
 requires = ["uv_build>=0.12.11,<0.13.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
