@@ -11,3 +11,6 @@ wheels/
 
 # Local data: SEP snapshots (copyrighted, never commit), SQLite DB
 data/
+
+# Claude Code: personal permission grants, not shared config
+.claude/settings.local.json
