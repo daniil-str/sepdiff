@@ -423,19 +423,34 @@ class Library:
             raise FetchError(f"{r.url}: HTTP {r.status}")
         return r.status
 
-    def _supplement_snap(self, slug: str, edition: str, path: str) -> tuple[int, str | None]:
+    def _supplement_snap(self, slug: str, edition: str, path: str) -> tuple[int, str | None, bool]:
+        """(http_status, blob_sha, было ли скачано только что) — уже известный документ не перекачиваем."""
         row = self.conn.execute(
             "SELECT http_status, blob_sha FROM supplements WHERE entry_slug = ? AND edition_slug = ? AND path = ?",
             (slug, edition, path)).fetchone()
         if row is not None:
-            return row["http_status"], row["blob_sha"]
+            return row["http_status"], row["blob_sha"], False
         r = self.fetcher.get(f"/archives/{edition}/entries/{slug}/{path}")
         blob = self.blobs.put(r.content) if r.status == 200 else None
         with self.conn:
             self.conn.execute(
                 "INSERT OR REPLACE INTO supplements (entry_slug, edition_slug, path, http_status, blob_sha, "
                 "fetched_at) VALUES (?, ?, ?, ?, ?, ?)", (slug, edition, path, r.status, blob, _now()))
-        return r.status, blob
+        return r.status, blob, True
+
+    def _supplement_digest(self, path: str, status: int, blob: str | None) -> str:
+        """path + статус + отпечаток содержимого — как у главной страницы, без вёрстки сайта.
+
+        notes.html — такая же страница SEP, как и сама статья (номер издания в
+        заголовке и подвале меняется в каждом издании без всякой правки) — сырые
+        байты для неё не годятся, нужен extract().text_sha. PDF (catalog.pdf)
+        так не нормализовать — сравниваем как есть.
+        """
+        if status != 200:
+            return f"{path}:{status}"
+        if path.lower().endswith((".html", ".htm")):
+            return f"{path}:200:{extract(self.blobs.get(blob)).text_sha}"  # type: ignore[arg-type]
+        return f"{path}:200:{blob}"
 
     def fetch_supplements(self, slug: str, progress: Progress | None = None) -> int:
         """Скачать дополнительные документы (notes.html и т.п.) уже известных изданий статьи.
@@ -456,9 +471,9 @@ class Library:
             doc = self._doc(s.blob_sha)   # type: ignore[arg-type]
             parts = []
             for path in doc.supplements:
-                status, blob = self._supplement_snap(slug, s.edition_slug, path)
-                requests += 1
-                parts.append(f"{path}:{status}:{blob or ''}")
+                status, blob, fetched = self._supplement_snap(slug, s.edition_slug, path)
+                requests += fetched
+                parts.append(self._supplement_digest(path, status, blob))
             digest = sha("\n".join(sorted(parts)))
             with self.conn:
                 self.conn.execute("UPDATE snapshots SET supplements_sha = ? WHERE entry_slug = ? "
