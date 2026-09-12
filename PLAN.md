@@ -253,7 +253,7 @@ CI на GitHub (2.5) прогоняет то же самое автоматич�
   [PR #5](https://github.com/daniil-str/sepdiff/pull/5). `docs/journal.md` §19.
 - **T3. Diff «рядом»** — переключатель «построчно / рядом» на странице diff,
   состояние в `?view=`, раскладка в две колонки чистым CSS, без JS.
-  PR #6 (готовится). `docs/journal.md` §20.
+  [PR #6](https://github.com/daniil-str/sepdiff/pull/6). `docs/journal.md` §20.
 - **T8. Публикация на GitHub** — репозиторий, LICENSE, `.gitignore`. [PR #3](https://github.com/daniil-str/sepdiff/pull/3).
 
 **Приёмка.** Тест маршрута на оба значения; при ширине 375 px страница не
