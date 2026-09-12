@@ -102,6 +102,9 @@ def fetch(
         "--quick", "-q", help="Только найти правки: не проверять издания между одинаковыми снимками.")] = False,
     no_live: Annotated[bool, typer.Option(
         "--no-live", help="Не проверять текущую версию на сайте.")] = False,
+    supplements: Annotated[bool, typer.Option(
+        "--supplements", help="Скачать и доп. документы статьи (notes.html и т.п.): "
+        "плюс запрос на документ на издание, на статьях с супплементом в каждом издании — часы.")] = False,
 ) -> None:
     """Скачать снимки статьи из архива SEP и построить её историю.
 
@@ -113,6 +116,7 @@ def fetch(
         "coarse": "Грубый проход: каждое 8-е издание",
         "refine": "Уточнение: в каком издании появилась каждая правка",
         "deep": "Проверка остальных изданий",
+        "supplements": "Дополнительные документы статьи",
     }
     shown: set[str] = set()
 
@@ -130,11 +134,16 @@ def fetch(
             shown.add(ev.phase)
             typer.secho(stages[ev.phase], bold=True)
         where = f"[{ev.done}/{ev.total}]" if ev.total is not None else "[поиск]"
+        if ev.phase == "supplements":
+            typer.echo(f"{where:>10} {ev.edition or '':9s}")
+            return
         status = typer.style("есть", fg="green") if ev.status == 200 else typer.style("нет (404)", dim=True)
         typer.echo(f"{where:>10} {ev.edition or '':9s} {status}")
 
     with _library() as lib:
         n = lib.scan(slug, edition, progress, deep=not quick, live=not no_live)
+        if supplements:
+            n += lib.fetch_supplements(slug, progress)
         hist = lib.history(slug)
         real = sum(1 for r in hist.revisions if r.kind != "markup_only")
         typer.echo(f"Запросов: {n}. Снимков: {hist.snapshots}, ревизий: {real} "
@@ -382,7 +391,15 @@ def _print_diff(d: PairDiff, context: int) -> None:
                + f" · +{st.words_added:,} / −{st.words_removed:,} слов · {st.blocks_changed} блоков · "
                + f"{len(st.sections)} разделов")
     if not any(op.kind != "equal" for op in d.body + d.biblio + d.apparatus):
-        typer.secho("Текст не изменился: отличается только вёрстка сайта.", dim=True)
+        if d.kind == "minor":
+            # текст, библиография и сами блоки apparatus не изменились — правку углядели
+            # по адресу ссылки (links_sha) или по доп. документу (supplements_sha),
+            # ни то ни другое здесь не показываем построчно
+            typer.secho("В текстовых блоках правки нет: адрес ссылки или дополнительный "
+                       "документ (notes.html и т.п.) — sepdiff их содержимое не сравнивает построчно.",
+                       dim=True)
+        else:
+            typer.secho("Текст не изменился: отличается только вёрстка сайта.", dim=True)
         return
     if st.blocks_changed:
         typer.echo()

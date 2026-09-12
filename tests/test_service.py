@@ -238,3 +238,27 @@ def test_watch_tick_picks_up_a_new_edition(tmp_path):
         assert [(c.edition.slug, c.kind) for c in found] == [("fall2021", "substantive")]
         assert lib.changes()[0].edition.slug == "fall2021"
         assert lib.watch_tick() == []                  # второй раз нового нет
+
+
+def _with_notes(**over: str) -> bytes:
+    return page(**over).replace(
+        b'<div id="toc"><ul>', b'<div id="toc"><ul><li><a href="notes.html">Notes</a></li>')
+
+
+def test_supplements_are_off_by_default_and_content_edit_is_minor(tmp_path):
+    # spr2020 и sum2020: одна и та же статья (текст, набор блоков и супплементов те же),
+    # различается только навигация сайта (как MARKUP) — сама по себе не правка;
+    # notes.html при этом у изданий разный.
+    pages = site({"kant": {"spr2020": _with_notes(), "sum2020": _with_notes(nav="NEW SITE DESIGN")}})
+    pages["/archives/spr2020/entries/kant/notes.html"] = b"<html><body><p>Note v1</p></body></html>"
+    pages["/archives/sum2020/entries/kant/notes.html"] = b"<html><body><p>Note v2</p></body></html>"
+    with Library(tmp_path, fetcher=FakeFetcher(pages)) as lib:  # type: ignore[arg-type]
+        lib.init_editions()
+        lib.scan("kant", only=["spr2020", "sum2020"], live=False)
+        # без --supplements правка внутри notes.html не видна: только вёрстка сайта
+        assert [r.kind for r in lib.history("kant").revisions] == ["created", "markup_only"]
+
+        n = lib.fetch_supplements("kant")
+        assert n == 2   # notes.html обеих изданий — впервые
+        assert [r.kind for r in lib.history("kant").revisions] == ["created", "minor"]
+        assert lib.fetch_supplements("kant") == 0   # второй раз всё из кеша, требований нет

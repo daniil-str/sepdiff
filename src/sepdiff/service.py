@@ -22,7 +22,7 @@ from .diffing import Op, PairStats, block_diff, classify, pair_stats
 from .editions import LIVE, Edition, parse_index
 from .extract import EXTRACT_VERSION, Doc, extract
 from .fetcher import Fetcher, FetchError
-from .normalize import normalize
+from .normalize import normalize, sha
 
 SLUG_RE = re.compile(r"[a-z0-9][a-z0-9.-]*")
 _IMPORT_RE = re.compile(r"([a-z0-9][a-z0-9.-]*)\.((?:spr|sum|fall|win)\d{4})\.(html|404)")
@@ -38,6 +38,7 @@ class SepDiffError(Exception):
 @dataclass
 class ScanEvent:
     # probe | coarse | refine | deep | fetch (издания из -e) — скачан снимок;
+    # supplements — скачан доп. документ издания (fetch_supplements);
     # plan — известно, сколько качать (total); partial — история пересчитана
     phase: str
     edition: str | None = None
@@ -63,6 +64,7 @@ class Snap:
     apparatus_sha: str | None = None
     struct_sha: str | None = None
     links_sha: str | None = None
+    supplements_sha: str | None = None
     title: str | None = None
     revision_date: str | None = None
     date_source: str | None = None
@@ -421,6 +423,67 @@ class Library:
             raise FetchError(f"{r.url}: HTTP {r.status}")
         return r.status
 
+    def _supplement_snap(self, slug: str, edition: str, path: str) -> tuple[int, str | None, bool]:
+        """(http_status, blob_sha, было ли скачано только что) — уже известный документ не перекачиваем."""
+        row = self.conn.execute(
+            "SELECT http_status, blob_sha FROM supplements WHERE entry_slug = ? AND edition_slug = ? AND path = ?",
+            (slug, edition, path)).fetchone()
+        if row is not None:
+            return row["http_status"], row["blob_sha"], False
+        r = self.fetcher.get(f"/archives/{edition}/entries/{slug}/{path}")
+        blob = self.blobs.put(r.content) if r.status == 200 else None
+        with self.conn:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO supplements (entry_slug, edition_slug, path, http_status, blob_sha, "
+                "fetched_at) VALUES (?, ?, ?, ?, ?, ?)", (slug, edition, path, r.status, blob, _now()))
+        return r.status, blob, True
+
+    def _supplement_digest(self, path: str, status: int, blob: str | None) -> str:
+        """path + статус + отпечаток содержимого — как у главной страницы, без вёрстки сайта.
+
+        notes.html — такая же страница SEP, как и сама статья (номер издания в
+        заголовке и подвале меняется в каждом издании без всякой правки) — сырые
+        байты для неё не годятся, нужен extract().text_sha. PDF (catalog.pdf)
+        так не нормализовать — сравниваем как есть.
+        """
+        if status != 200:
+            return f"{path}:{status}"
+        if path.lower().endswith((".html", ".htm")):
+            return f"{path}:200:{extract(self.blobs.get(blob)).text_sha}"  # type: ignore[arg-type]
+        return f"{path}:200:{blob}"
+
+    def fetch_supplements(self, slug: str, progress: Progress | None = None) -> int:
+        """Скачать дополнительные документы (notes.html и т.п.) уже известных изданий статьи.
+
+        Отдельно от scan(): фазы probe/coarse/refine/deep ищут правки только на
+        главной странице статьи, границы для доп. документов не нужны — качаем
+        по одному разу каждый документ каждого издания, где он упомянут. Плюс
+        запрос на документ на издание; у статьи с супплементом в каждом издании
+        это часы, поэтому только по явному флагу (--supplements) и никогда не
+        повторно: уже известный документ (в т.ч. 404) не перекачивается.
+        """
+        report = progress or (lambda _e: None)
+        snaps = [s for s in self._snaps(slug) if s.http_status == 200]
+        pending = [s for s in snaps if s.supplements_sha is None]
+        report(ScanEvent("plan", total=len(pending)))
+        requests = done = 0
+        for s in pending:
+            doc = self._doc(s.blob_sha)   # type: ignore[arg-type]
+            parts = []
+            for path in doc.supplements:
+                status, blob, fetched = self._supplement_snap(slug, s.edition_slug, path)
+                requests += fetched
+                parts.append(self._supplement_digest(path, status, blob))
+            digest = sha("\n".join(sorted(parts)))
+            with self.conn:
+                self.conn.execute("UPDATE snapshots SET supplements_sha = ? WHERE entry_slug = ? "
+                                  "AND edition_slug = ?", (digest, slug, s.edition_slug))
+            done += 1
+            report(ScanEvent("supplements", s.edition_slug, done=done, total=len(pending)))
+        if pending:
+            self.rebuild(slug)
+        return requests
+
     def scan(self, slug: str, only: list[str] | None = None, progress: Progress | None = None,
              deep: bool = True, live: bool = True) -> int:
         """Скачать недостающие снимки статьи и пересчитать историю. Возвращает число запросов.
@@ -591,6 +654,21 @@ class Library:
         return pair_stats(block_diff(da.body, db_.body), block_diff(da.biblio, db_.biblio),
                           block_diff(da.apparatus, db_.apparatus))
 
+    def _classify_pair(self, a: Snap, b: Snap) -> str:
+        """classify() по хешам БД, доуточнённый по Doc для правок только в ссылках.
+
+        Правку только в Related Entries/Other Internet Resources («вычистили
+        мёртвые») по одним хешам от minor не отличить — нужны сами блоки
+        (links_kind). Но Doc содержимого доп. документов не знает: если minor
+        дал именно supplements_sha (а не apparatus/links), доуточнять нечем —
+        иначе подтверждённая правка внутри документа откатится в markup_only.
+        """
+        kind = classify(a, b)
+        if (kind == "minor" and a.text_sha == b.text_sha and a.struct_sha == b.struct_sha
+                and a.supplements_sha == b.supplements_sha):
+            kind = classify(self._doc(a.blob_sha), self._doc(b.blob_sha))  # type: ignore[arg-type]
+        return kind
+
     def rebuild(self, slug: str) -> None:
         """Пересчитать ревизии статьи по снимкам (и переизвлечь снимки старой версии экстрактора)."""
         snaps = self._snaps(slug)
@@ -619,10 +697,7 @@ class Library:
                 revisions.append((s.edition_slug, prev.edition_slug if prev else None, "created",
                                   PairStats(words_added=s.word_count or 0)))
             else:
-                kind = classify(prev, s)
-                if kind == "minor" and prev.text_sha == s.text_sha and prev.struct_sha == s.struct_sha:
-                    # правка только в ссылках: «вычистили мёртвые» от правки по хешам не отличить
-                    kind = classify(self._doc(prev.blob_sha), self._doc(s.blob_sha))  # type: ignore[arg-type]
+                kind = self._classify_pair(prev, s)
                 if kind != "identical":
                     stats = PairStats() if kind == "markup_only" else self._pair_stats(prev, s)
                     revisions.append((s.edition_slug, prev.edition_slug, kind, stats))
@@ -811,7 +886,7 @@ class Library:
         body = block_diff(da.body, db_.body)
         biblio = block_diff(da.biblio, db_.biblio)
         apparatus = block_diff(da.apparatus, db_.apparatus)
-        return PairDiff(slug, db_.title or slug, Edition.parse(a), Edition.parse(b), classify(da, db_),
+        return PairDiff(slug, db_.title or slug, Edition.parse(a), Edition.parse(b), self._classify_pair(sa, sb),
                         pair_stats(body, biblio, apparatus), body, biblio, apparatus)
 
     def show(self, slug: str, edition: str) -> Doc:

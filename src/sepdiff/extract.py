@@ -142,6 +142,12 @@ class Doc:
         return sha(" ".join(b.kind for b in self.body + self.biblio) + "\n" + "\n".join(self.supplements))
 
     @property
+    def supplements_sha(self) -> str | None:
+        """Doc сам содержимого доп. документов не знает (их качает Library отдельно, --supplements):
+        появление или исчезновение документа уже ловит struct_sha, а правку внутри — только Snap из БД."""
+        return None
+
+    @property
     def word_count(self) -> int:
         return sum(len(b.words) for b in self.body)
 
