@@ -28,6 +28,9 @@ uv run sepdiff show kant fall2024    # извлечённый текст вер�
 uv run sepdiff live frege            # правки на сайте, которых ещё нет в архиве
 uv run sepdiff diff frege live       # что именно: последнее издание -> сайт
 uv run sepdiff export-git kant ./kant-history   # история как git-репозиторий
+uv run sepdiff watch kant            # отслеживать статью
+uv run sepdiff watch --check         # проверить отслеживаемые сейчас
+uv run sepdiff feed                  # последние правки отслеживаемых статей
 uv run sepdiff seed                  # оглавление SEP для поиска (1 запрос)
 uv run sepdiff search modal
 ```
@@ -58,6 +61,11 @@ uv run sepdiff serve                 # http://localhost:8000/
 издания, а каждое издание — тег: `git log`, `git diff spr2016 fall2020
 --word-diff`, `git blame text.md` («в каком издании появился этот абзац»).
 Внутри тексты SEP — не публикуйте такой репозиторий.
+
+Отслеживаемые статьи (`watch`) веб-сервер сам обходит раз в час: новые
+издания и текущая версия на сайте. Найденные правки — в ленте
+`http://localhost:8000/feed.atom` и в `sepdiff feed`. Без сервера то же
+делает `sepdiff watch --check`, например по расписанию раз в сутки.
 
 `fetch` соблюдает `robots.txt` SEP: не больше одного запроса в 5 секунд (в том
 числе между запусками), никаких `/cgi-bin/` и `/search/`. Скачанное не

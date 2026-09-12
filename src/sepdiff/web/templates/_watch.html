@@ -1,0 +1,7 @@
+<form method="post" action="/e/{{ slug }}/watch?on={{ 0 if watched else 1 }}" class="watch"
+      hx-post="/e/{{ slug }}/watch?on={{ 0 if watched else 1 }}" hx-swap="outerHTML">
+  <button class="secondary"
+          title="Сервер раз в час проверяет отслеживаемые статьи: новые издания и текущую версию на сайте; правки идут в ленту /feed.atom">
+    {{ "★ отслеживается" if watched else "☆ отслеживать" }}
+  </button>
+</form>

@@ -14,7 +14,9 @@
 </div>
 
 {% if hist and hist.live %}{% set lv = hist.live %}
-  {% if lv.kind in TEXT_KINDS or lv.kind == "removed" %}
+  {% if lv.stale %}
+  <p class="muted">Сохранённая копия сайта старше последнего издания — проверьте её заново.</p>
+  {% elif lv.kind in TEXT_KINDS or lv.kind == "removed" %}
   <div class="live-banner">
     <span class="kind {{ lv.kind }}" title="{{ KIND_HINT[lv.kind] }}">{{ KIND_LABEL[lv.kind] }}</span>
     На сайте есть правка, которой ещё нет в архиве{% if lv.base %} (после {{ lv.base.label }}){% endif %}:
@@ -26,6 +28,8 @@
   <p class="muted live-same">Текущая версия на сайте совпадает с {{ lv.base.label }} (проверено {{ lv.checked_at[:10] }}).</p>
   {% endif %}
 {% endif %}
+
+{% include "_watch.html" %}
 
 <section id="scan" class="scan">
   {% if job %}

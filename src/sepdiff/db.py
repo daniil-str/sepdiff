@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA = """
 -- квартальные издания SEP, по порядку выхода
@@ -111,6 +111,9 @@ MIGRATIONS = {
         checked_at      TEXT NOT NULL    -- когда последний раз спрашивали сайт (в т.ч. 304)
     );
     """,
+    # отслеживаемые статьи: воркер сам проверяет их раз в час (новые издания,
+    # текущая версия на сайте), найденные правки идут в Atom-ленту
+    5: "ALTER TABLE entries ADD COLUMN watched INTEGER NOT NULL DEFAULT 0;",
 }
 
 

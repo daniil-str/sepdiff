@@ -9,6 +9,16 @@
 
 <div id="results">{% include "_results.html" %}</div>
 
+{% if watched_list %}
+<h2>Отслеживаемые <a class="feed" href="/feed.atom" title="Atom-лента правок">лента Atom</a></h2>
+<ul class="entries">
+  {% for w in watched_list %}
+  <li><a href="/e/{{ w.slug }}">{{ w.title or w.slug }}</a> <code>{{ w.slug }}</code>
+    {% if w.live_checked_at %}<span class="muted">· сайт проверен {{ w.live_checked_at[:10] }}</span>{% endif %}</li>
+  {% endfor %}
+</ul>
+{% endif %}
+
 {% if recent %}
 <h2>Статьи с историей</h2>
 <ul class="entries">

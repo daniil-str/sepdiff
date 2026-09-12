@@ -16,7 +16,7 @@ from .present import editions_word as _editions_word
 from .present import gap_texts
 from .present import plural as _plural
 from .present import stats_line as _stats_line
-from .service import History, Library, LiveRevision, PairDiff, ScanEvent, SepDiffError
+from .service import Change, History, Library, LiveRevision, PairDiff, ScanEvent, SepDiffError
 
 app = typer.Typer(
     help="История правок статей Stanford Encyclopedia of Philosophy — как git log.",
@@ -147,6 +147,10 @@ def _print_live(slug: str, live: LiveRevision | None) -> None:
     if live is None:
         return
     checked = live.checked_at[:10]
+    if live.stale:
+        typer.secho(f"  сохранённая копия сайта старше последнего издания — проверьте: sepdiff live {slug} --force",
+                    fg="yellow")
+        return
     if live.kind in ("identical", "markup_only"):
         base = live.base.slug if live.base else "—"
         typer.secho(f"  текущая версия на сайте совпадает с {base} (проверено {checked})", dim=True)
@@ -186,6 +190,53 @@ def live(
             typer.echo(f"Сравнить не с чем — сначала история: sepdiff fetch {slug}")
             return
         _print_live(slug, current)
+
+
+def _print_change(c: Change) -> None:
+    mark, color = KIND_STYLE.get(c.kind, ("◆", None))
+    typer.echo(typer.style(f"{mark} {c.slug:24s}", fg=color, bold=c.kind == "substantive")
+               + f" {c.edition.slug:9s}" + typer.style(f" {c.when[:10]}  ", dim=True)
+               + typer.style(f"{c.kind:12s}", fg=color) + f" {_stats_line(c.kind, c.stats)}")
+
+
+@app.command()
+def watch(
+    slug: Annotated[str | None, typer.Argument(help="Статья; без неё — список отслеживаемых.")] = None,
+    remove: Annotated[bool, typer.Option("--remove", "-r", help="Перестать отслеживать.")] = False,
+    check: Annotated[bool, typer.Option(
+        "--check", "-c", help="Сейчас проверить отслеживаемые: новые издания и сайт.")] = False,
+) -> None:
+    """Отслеживать статью: новые издания и правки на сайте.
+
+    Веб-сервер обходит отслеживаемые статьи раз в час, найденные правки видны
+    в ленте /feed.atom. Без сервера то же делает `sepdiff watch --check`
+    (например, по расписанию раз в сутки).
+    """
+    with _library() as lib:
+        if slug:
+            lib.set_watched(slug, not remove)
+            typer.echo(f"{slug}: {'больше не отслеживается' if remove else 'отслеживается'}")
+        if check:
+            found = lib.watch_tick()
+            typer.echo("Новых правок нет." if not found else f"Найдено правок: {len(found)}")
+            for change in found:
+                _print_change(change)
+        rows = lib.watched()
+        typer.secho(f"Отслеживается статей: {len(rows)}", dim=True)
+        for w in rows:
+            checked = f" · сайт проверен {str(w['live_checked_at'])[:10]}" if w["live_checked_at"] else ""
+            typer.echo(f"  {str(w['slug']):32s} {w['title'] or ''}{typer.style(checked, dim=True)}")
+
+
+@app.command()
+def feed(limit: Annotated[int, typer.Option(help="Сколько правок показать.")] = 20) -> None:
+    """Последние правки отслеживаемых статей (то же, что в ленте /feed.atom)."""
+    with _library() as lib:
+        changes = lib.changes(limit=limit)
+        if not changes:
+            typer.echo("Пусто. Отслеживать статью: sepdiff watch <slug>")
+        for change in changes:
+            _print_change(change)
 
 
 @app.command(name="export-git")

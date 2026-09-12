@@ -1,5 +1,5 @@
 import pytest
-from fakes import KANT, FakeFetcher, site
+from fakes import EDS, KANT, FakeFetcher, site
 from pages import LIVE_PENDING, MINOR, SUBSTANTIVE, page
 from typer.testing import CliRunner
 
@@ -202,3 +202,38 @@ def test_cli_log_and_diff(lib, monkeypatch):
     assert "[-lived-]" in out.output and "{+spent+}" in out.output
     out = runner.invoke(app, ["diff", "kant", "fall2019", "win2020"])
     assert out.exit_code == 1 and "Ошибка" in out.output
+
+
+def test_watch_list_and_feed(tmp_path):
+    pages = site({"kant": KANT})
+    pages["/entries/kant/"] = page(**LIVE_PENDING)      # на сайте правка, которой нет в архиве
+    with Library(tmp_path, fetcher=FakeFetcher(pages)) as lib:  # type: ignore[arg-type]
+        lib.init_editions()
+        lib.scan("kant")
+        assert lib.changes() == []                     # пока не отслеживаем — лента пуста
+        lib.set_watched("kant")
+        assert lib.is_watched("kant") and [w["slug"] for w in lib.watched()] == ["kant"]
+        changes = lib.changes()
+        assert (changes[0].edition.slug, changes[0].kind) == ("live", "substantive")
+        assert [c.edition.slug for c in changes[1:]] == ["sum2021", "spr2021", "win2020", "spr2020"]
+        lib.set_watched("kant", False)
+        assert lib.changes() == []
+
+
+def test_watch_tick_picks_up_a_new_edition(tmp_path):
+    pages = site({"kant": KANT})
+    pages["/entries/kant/"] = KANT["sum2021"]          # на сайте то же, что в последнем издании
+    with Library(tmp_path, fetcher=FakeFetcher(pages)) as lib:  # type: ignore[arg-type]
+        lib.init_editions()
+        lib.scan("kant")
+        lib.set_watched("kant")
+
+    # вышло новое издание с правкой
+    pages["/archives/"] = "".join(f'<a href="{s}/">{s}</a>' for s in [*EDS, "fall2021"]).encode()
+    pages["/archives/fall2021/entries/kant/"] = page(**LIVE_PENDING)
+    pages["/entries/kant/"] = page(**LIVE_PENDING)     # сайт показывает то же, что новое издание
+    with Library(tmp_path, fetcher=FakeFetcher(pages)) as lib:  # type: ignore[arg-type]
+        found = lib.watch_tick()
+        assert [(c.edition.slug, c.kind) for c in found] == [("fall2021", "substantive")]
+        assert lib.changes()[0].edition.slug == "fall2021"
+        assert lib.watch_tick() == []                  # второй раз нового нет

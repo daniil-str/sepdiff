@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import AsyncIterator, Callable, Iterator
+from datetime import date
 from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlencode
@@ -23,6 +24,7 @@ from .. import config, jobs
 from ..fetcher import Fetcher
 from ..present import KIND_HINT, KIND_LABEL, KIND_MARK, TEXT_KINDS, eta_text, gap_texts, stats_line
 from ..service import SLUG_RE, History, Library, PairDiff, SepDiffError, check_slug
+from .feed import atom, rfc3339
 from .render import changed, ops_html
 
 HERE = Path(__file__).parent
@@ -142,7 +144,16 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request, lib: Lib, q: str = "") -> HTMLResponse:
-        return page(request, "index.html", recent=lib.recent_entries(), **search_ctx(lib, q))
+        return page(request, "index.html", recent=lib.recent_entries(), watched_list=lib.watched(),
+                    **search_ctx(lib, q))
+
+    @app.get("/feed.atom")
+    def feed(request: Request, lib: Lib) -> Response:
+        """Atom-лента правок отслеживаемых статей."""
+        changes = lib.changes(limit=50)
+        base = str(request.base_url).rstrip("/")
+        updated = rfc3339(changes[0].when) if changes else rfc3339(date.today().isoformat())
+        return Response(atom(changes, base, updated), media_type="application/atom+xml")
 
     @app.get("/search", response_class=HTMLResponse)
     def search(request: Request, lib: Lib, q: str = "") -> Response:
@@ -175,6 +186,7 @@ def create_app(
             "slug": slug, "title": (hist.title if hist else None) or lib.entry_title(slug),
             "hist": hist, "rows": rows, "hidden": hidden, "show_all": show_all,
             "job": job, "position": jobs.position(lib.conn, job) if job else 0,
+            "watched": lib.is_watched(slug),
             "last_job": jobs.latest(lib.conn, jobs.SCAN, slug),
         }
 
@@ -196,6 +208,15 @@ def create_app(
             return RedirectResponse(f"/e/{slug}", status_code=303)
         position = await asyncio.to_thread(_position, root, job)
         return page(request, "_progress.html", job=job, position=position)
+
+    @app.post("/e/{slug}/watch")
+    async def watch(request: Request, slug: str, on: bool = True) -> Response:
+        same_origin(request)
+        check_slug(slug)
+        await asyncio.to_thread(_set_watched, root, slug, on)
+        if not is_htmx(request):
+            return RedirectResponse(f"/e/{slug}", status_code=303)
+        return page(request, "_watch.html", slug=slug, watched=on)
 
     @app.get("/jobs/{job_id}/progress", response_class=HTMLResponse)
     def progress(request: Request, job_id: int, lib: Lib) -> HTMLResponse:
@@ -263,6 +284,11 @@ def create_app(
         return page(request, "version.html", slug=slug, edition=edition, doc=doc)
 
     return app
+
+
+def _set_watched(root: Path, slug: str, on: bool) -> None:
+    with Library(root) as lib:
+        lib.set_watched(slug, on)
 
 
 def _enqueue(root: Path, kind: str, target: str) -> jobs.Job:

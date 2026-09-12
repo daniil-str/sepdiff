@@ -22,3 +22,16 @@ def test_interrupted_jobs_are_requeued(tmp_path):
         jobs.claim(lib.conn)
         jobs.requeue_interrupted(lib.conn)
         assert jobs.get(lib.conn, job.id).state == "queued"  # type: ignore[union-attr]
+
+
+def test_tick_enqueues_watch_job_only_for_watched(tmp_path):
+    worker = jobs.Worker(tmp_path)
+    worker.tick_interval = 0
+    worker.tick_if_due()
+    with Library(tmp_path) as lib:
+        assert jobs.active(lib.conn, jobs.WATCH, "all") is None
+        lib.set_watched("kant")
+    worker.tick_if_due()
+    with Library(tmp_path) as lib:
+        job = jobs.active(lib.conn, jobs.WATCH, "all")
+        assert job is not None and job.kind == jobs.WATCH

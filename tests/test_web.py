@@ -91,3 +91,20 @@ def test_errors_and_csrf(web):
     assert client.get("/e/nope/diff").status_code == 404
     assert client.post("/e/kant/scan", headers={"Origin": "https://evil.example"}).status_code == 403
     assert client.post("/e/kant/scan", follow_redirects=False).status_code == 303
+
+
+def test_watch_toggle_and_atom_feed(web):
+    client, worker = web
+    client.post("/e/kant/scan", headers=HX)
+    assert worker.run_once()
+    assert "☆ отслеживать" in client.get("/e/kant").text
+
+    assert "★ отслеживается" in client.post("/e/kant/watch", params={"on": 1}, headers=HX).text
+    assert "Отслеживаемые" in client.get("/").text
+    feed = client.get("/feed.atom")
+    assert feed.headers["content-type"].startswith("application/atom+xml")
+    assert "<entry>" in feed.text and "/e/kant/diff?b=spr2021" in feed.text
+
+    assert "☆ отслеживать" in client.post("/e/kant/watch", params={"on": 0}, headers=HX).text
+    assert "<entry>" not in client.get("/feed.atom").text
+    assert client.post("/e/kant/watch", follow_redirects=False).status_code == 303

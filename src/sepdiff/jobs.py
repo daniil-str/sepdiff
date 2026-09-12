@@ -12,6 +12,7 @@ import asyncio
 import logging
 import sqlite3
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, fields
 from datetime import UTC, datetime
@@ -26,6 +27,8 @@ log = logging.getLogger(__name__)
 SECONDS_PER_REQUEST = 6   # 5 с паузы robots.txt + сам запрос
 SCAN = "scan_entry"
 SEED = "seed_index"
+WATCH = "watch_tick"
+TICK_INTERVAL = 3600.0   # как часто воркер сам обходит отслеживаемые статьи
 
 
 @dataclass
@@ -131,6 +134,8 @@ class Worker:
         self.fetcher_factory = fetcher_factory
         self._stop = threading.Event()
         self._wake: asyncio.Event | None = None
+        self.tick_interval = TICK_INTERVAL
+        self._last_tick = 0.0
 
     def notify(self) -> None:
         """Разбудить воркер (вызывать из event loop)."""
@@ -146,6 +151,7 @@ class Worker:
             while not self._stop.is_set():
                 if await asyncio.to_thread(self.run_once):
                     continue
+                await asyncio.to_thread(self.tick_if_due)
                 try:
                     await asyncio.wait_for(self._wake.wait(), timeout=5)
                 except TimeoutError:
@@ -153,6 +159,16 @@ class Worker:
                 self._wake.clear()
         finally:
             self._stop.set()   # идущее сканирование прервётся на следующем издании
+
+    def tick_if_due(self) -> None:
+        """Поставить обход отслеживаемых статей, если пора: раз в час и сразу при старте."""
+        now = time.monotonic()
+        if self._last_tick and now - self._last_tick < self.tick_interval:
+            return
+        self._last_tick = now
+        with Library(self.root) as lib:
+            if lib.watched():
+                enqueue(lib.conn, WATCH, "all")
 
     def run_once(self) -> bool:
         """Выполнить одну задачу из очереди. False — очередь пуста."""
@@ -177,6 +193,10 @@ class Worker:
     def _execute(self, lib: Library, job: Job) -> str:
         if job.kind == SEED:
             return f"в оглавлении {lib.seed()} статей"
+        if job.kind == WATCH:
+            found = lib.watch_tick()
+            return ("у отслеживаемых статей правок нет" if not found else
+                    "новое: " + "; ".join(f"{c.slug} {c.edition.slug} ({c.kind})" for c in found[:5]))
         if job.kind != SCAN:
             raise SepDiffError(f"неизвестный вид задачи: {job.kind}")
 

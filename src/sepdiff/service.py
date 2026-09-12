@@ -101,6 +101,21 @@ class LiveRevision:
     stats: PairStats
     revision_date: str | None
     checked_at: str            # когда последний раз спрашивали сайт
+    # сохранённая копия сайта старше последнего скачанного издания: сравнивать
+    # их бессмысленно (покажет «правку назад»), нужно спросить сайт заново
+    stale: bool = False
+
+
+@dataclass
+class Change:
+    """Правка для ленты: ревизия издания или правка на сайте, ещё не в архиве."""
+    slug: str
+    title: str
+    edition: Edition
+    kind: str
+    stats: PairStats
+    when: str                   # дата выхода издания или момент, когда заметили правку
+    prev_edition: str | None
 
 
 @dataclass
@@ -280,6 +295,85 @@ class Library:
             "FROM entries e WHERE EXISTS (SELECT 1 FROM snapshots s WHERE s.entry_slug = e.slug) "
             "ORDER BY e.last_scanned_at DESC, e.slug LIMIT ?", (limit,)).fetchall()
         return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
+    # Отслеживаемые статьи и лента правок
+    # ------------------------------------------------------------------
+
+    def set_watched(self, slug: str, on: bool = True) -> None:
+        self._ensure_entry(slug)
+        with self.conn:
+            self.conn.execute("UPDATE entries SET watched = ? WHERE slug = ?", (int(on), slug))
+
+    def is_watched(self, slug: str) -> bool:
+        row = self.conn.execute("SELECT watched FROM entries WHERE slug = ?", (slug,)).fetchone()
+        return bool(row and row["watched"])
+
+    def watched(self) -> list[dict[str, object]]:
+        rows = self.conn.execute(
+            "SELECT e.slug, e.title, e.last_scanned_at, e.scan_state, "
+            "(SELECT checked_at FROM live l WHERE l.entry_slug = e.slug) AS live_checked_at "
+            "FROM entries e WHERE e.watched = 1 ORDER BY e.slug").fetchall()
+        return [dict(r) for r in rows]
+
+    def _live_changes(self, slugs: list[str]) -> list[Change]:
+        out = []
+        for slug in slugs:
+            live = self.live_revision(slug)
+            if live is not None and not live.stale and live.kind not in ("identical", "markup_only"):
+                out.append(Change(slug, self.entry_title(slug) or slug, Edition.parse(LIVE), live.kind,
+                                  live.stats, live.checked_at, live.base.slug if live.base else None))
+        return out
+
+    def changes(self, limit: int = 50, watched_only: bool = True) -> list[Change]:
+        """Последние правки: ревизии изданий плюс правки на сайте, которых ещё нет в архиве."""
+        cond = "e.watched = 1 AND " if watched_only else ""
+        rows = self.conn.execute(
+            f"SELECT r.*, e.title, ed.released_on FROM revisions r "
+            f"JOIN entries e ON e.slug = r.entry_slug "
+            f"JOIN editions ed ON ed.slug = r.edition_slug "
+            f"WHERE {cond}r.kind != 'markup_only' "
+            f"ORDER BY ed.released_on DESC, r.entry_slug LIMIT ?", (limit,)).fetchall()
+        out = [Change(r["entry_slug"], r["title"] or r["entry_slug"], Edition.parse(r["edition_slug"]), r["kind"],
+                      PairStats(r["words_added"], r["words_removed"], r["blocks_changed"],
+                                json.loads(r["sections_touched"]), r["biblio_added"], r["biblio_removed"],
+                                r["biblio_modified"], r["apparatus_changed"]),
+                      r["released_on"], r["prev_edition"]) for r in rows]
+        slugs = [str(w["slug"]) for w in self.watched()] if watched_only else sorted(self.scanned_slugs())
+        out += self._live_changes(slugs)
+        out.sort(key=lambda c: c.when, reverse=True)
+        return out[:limit]
+
+    def watch_tick(self, progress: Progress | None = None) -> list[Change]:
+        """Обойти отслеживаемые статьи: новые издания и текущая версия на сайте.
+
+        Возвращает найденные правки. Запросы те же, раз в 5 с: у отслеживаемой
+        статьи это один запрос в сутки на текущую версию плюс по одному на
+        каждое вышедшее издание.
+        """
+        watched = [str(w["slug"]) for w in self.watched()]
+        if not watched:
+            return []
+        eds = self.ensure_editions()
+        found: list[Change] = []
+        for slug in watched:
+            known = self._statuses(slug)
+            state = self.conn.execute("SELECT scan_state FROM entries WHERE slug = ?", (slug,)).fetchone()
+            missing = [e.slug for e in eds if e.slug not in known][-4:]
+            new_edition = bool(missing) and bool(state) and state["scan_state"] == "complete"
+            if new_edition:
+                # у полностью просканированной статьи это издания, вышедшие с тех пор
+                self.scan(slug, only=missing, progress=progress, live=False)
+                found += [c for c in self.changes(limit=len(missing) + 4, watched_only=False)
+                          if c.slug == slug and c.edition.slug in missing]
+            before = self.live_revision(slug)
+            # после нового издания сохранённая копия сайта устарела — спрашиваем заново
+            if self.refresh_live(slug, force=new_edition) in ("updated", "gone"):
+                after = self.live_revision(slug)
+                if after is not None and after.kind not in ("identical", "markup_only") and (
+                        before is None or (before.kind, before.stats) != (after.kind, after.stats)):
+                    found += self._live_changes([slug])
+        return found
 
     def snapshot_editions(self, slug: str) -> list[Edition]:
         """Издания, в которых статья скачана и есть (HTTP 200), по порядку выхода."""
@@ -663,13 +757,14 @@ class Library:
         if base is None:
             return LiveRevision(None, "created", PairStats(words_added=live_doc.word_count),
                                 live_doc.revision_date, row["checked_at"])
+        stale = bool(base_ed and str(row["fetched_at"])[:10] < base_ed.released_on.isoformat())
         base_doc = self._doc(base.blob_sha)  # type: ignore[arg-type]
         kind = classify(base_doc, live_doc)
         stats = PairStats()
         if kind not in ("identical", "markup_only"):
             stats = pair_stats(block_diff(base_doc.body, live_doc.body), block_diff(base_doc.biblio, live_doc.biblio),
                                block_diff(base_doc.apparatus, live_doc.apparatus))
-        return LiveRevision(base_ed, kind, stats, live_doc.revision_date, row["checked_at"])
+        return LiveRevision(base_ed, kind, stats, live_doc.revision_date, row["checked_at"], stale)
 
     # ------------------------------------------------------------------
     # Diff и просмотр
