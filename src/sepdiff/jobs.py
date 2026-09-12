@@ -18,7 +18,7 @@ from dataclasses import dataclass, fields
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .fetcher import FetchError, Fetcher
+from .fetcher import Fetcher, FetchError
 from .present import TEXT_KINDS
 from .service import Library, ScanEvent, SepDiffError
 

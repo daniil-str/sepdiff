@@ -21,7 +21,7 @@ from .blobs import BlobStore
 from .diffing import Op, PairStats, block_diff, classify, pair_stats
 from .editions import LIVE, Edition, parse_index
 from .extract import EXTRACT_VERSION, Doc, extract
-from .fetcher import FetchError, Fetcher
+from .fetcher import Fetcher, FetchError
 from .normalize import normalize
 
 SLUG_RE = re.compile(r"[a-z0-9][a-z0-9.-]*")

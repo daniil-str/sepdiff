@@ -27,9 +27,8 @@ from datetime import date
 from difflib import SequenceMatcher
 from pathlib import Path
 
-from selectolax.lexbor import LexborHTMLParser, LexborNode
-
 from fetch import CACHE
+from selectolax.lexbor import LexborHTMLParser, LexborNode
 
 # --------------------------------------------------------------------------
 # Эталон: снят вручную с archinfo.cgi?entry=<slug> (автоматически туда нельзя —
