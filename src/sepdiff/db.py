@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 SCHEMA = """
 -- квартальные издания SEP, по порядку выхода
@@ -114,6 +114,21 @@ MIGRATIONS = {
     # отслеживаемые статьи: воркер сам проверяет их раз в час (новые издания,
     # текущая версия на сайте), найденные правки идут в Atom-ленту
     5: "ALTER TABLE entries ADD COLUMN watched INTEGER NOT NULL DEFAULT 0;",
+    # снимки дополнительных документов статьи (notes.html, supplement.pdf) —
+    # скачиваются отдельно и по флагу (docs/journal.md §19); supplements_sha —
+    # свёртка по всем документам издания, участвует в classify как apparatus_sha
+    6: """
+    CREATE TABLE supplements (
+        entry_slug      TEXT NOT NULL REFERENCES entries(slug),
+        edition_slug    TEXT NOT NULL REFERENCES editions(slug),
+        path            TEXT NOT NULL,      -- 'notes.html', относительно каталога статьи
+        http_status     INTEGER NOT NULL,
+        blob_sha        TEXT,
+        fetched_at      TEXT NOT NULL,
+        PRIMARY KEY (entry_slug, edition_slug, path)
+    );
+    ALTER TABLE snapshots ADD COLUMN supplements_sha TEXT;
+    """,
 }
 
 

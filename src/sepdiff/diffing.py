@@ -93,6 +93,8 @@ class Versioned(Protocol):
     @property
     def links_sha(self) -> str | None: ...
     @property
+    def supplements_sha(self) -> str | None: ...
+    @property
     def revision_date(self) -> str | None: ...
     @property
     def date_source(self) -> str | None: ...
@@ -168,7 +170,10 @@ def classify(a: Versioned, b: Versioned) -> str:
         # адреса ссылок сравниваем, только если вёрстка обоих снимков их выделяет:
         # на смене вёрстки (kant sum2014 -> fall2014) они появляются без всякой правки
         links_changed = bool(a.links_sha and b.links_sha and a.links_sha != b.links_sha)
-        if a.apparatus_sha != b.apparatus_sha or links_changed:
+        # содержимое доп. документов знает только Snap из БД (--supplements), не Doc
+        supplements_changed = bool(
+            a.supplements_sha and b.supplements_sha and a.supplements_sha != b.supplements_sha)
+        if a.apparatus_sha != b.apparatus_sha or links_changed or supplements_changed:
             if isinstance(a, Doc) and isinstance(b, Doc):
                 return links_kind(a, b)
             return "minor"

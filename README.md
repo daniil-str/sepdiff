@@ -21,6 +21,7 @@ uv sync
 uv run sepdiff init                  # база + список изданий (1 запрос)
 uv run sepdiff fetch kant            # скачать все издания статьи (до ~12 мин)
 uv run sepdiff fetch kant --quick    # только найти правки: история за пару минут
+uv run sepdiff fetch kant --supplements   # + доп. документы статьи (notes.html и т.п.), это часы
 uv run sepdiff log kant              # история ревизий, новые сверху
 uv run sepdiff diff kant fall2024    # ревизия относительно предыдущего снимка
 uv run sepdiff diff kant spr2016 fall2020
