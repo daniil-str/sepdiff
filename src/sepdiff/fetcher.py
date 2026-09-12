@@ -1,4 +1,4 @@
-"""HTTP к plato.stanford.edu с соблюдением robots.txt (PLAN.md §1.4, §4.1).
+"""HTTP к plato.stanford.edu с соблюдением robots.txt (docs/domain.md, раздел 4).
 
 - не больше одного запроса в 5 с — в том числе между запусками CLI подряд:
   время последнего запроса хранится в файле рядом с базой;

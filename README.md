@@ -87,7 +87,7 @@ uv run sepdiff serve                 # http://localhost:8000/
 | ✕ | removed | статья пропала из издания |
 
 Как это определяется и насколько совпадает с данными самого SEP — в
-[PLAN.md](PLAN.md) (§1.2, §13).
+[docs/domain.md](docs/domain.md).
 
 ## Разработка
 
@@ -99,3 +99,8 @@ uv run ruff check
 `tests/test_real_snapshots.py` сверяет классификатор с эталоном SEP на
 настоящих снимках из `data/spike/` (скачать: `uv run python spike/fetch.py`);
 без них тест пропускается.
+
+Как ведётся работа над проектом (ветки, ревью коммитов, очередь задач) —
+[PLAN.md](PLAN.md); устройство источника и правила классификации —
+[docs/domain.md](docs/domain.md); что уже сделано, с числами —
+[docs/journal.md](docs/journal.md).

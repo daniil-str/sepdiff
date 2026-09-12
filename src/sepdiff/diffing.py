@@ -1,4 +1,4 @@
-"""Двухуровневый diff (блоки, затем слова) и классификация пары снимков (PLAN.md §1.2, §6)."""
+"""Двухуровневый diff (блоки, затем слова) и классификация пары снимков (docs/domain.md, разделы 2 и 7)."""
 
 from __future__ import annotations
 
@@ -116,7 +116,7 @@ def same_date(a: Versioned, b: Versioned) -> bool:
 def links_kind(a: Doc, b: Doc) -> str:
     """Текст статьи тот же, поменялись Related Entries / Other Internet Resources: minor или markup_only.
 
-    Эвристики по данным этапа 3 (PLAN.md §16):
+    Эвристики по данным этапа 3 (docs/journal.md §16):
     - Related Entries: надписи SEP подставляет сам из названий целевых статей и
       меняет при их переименовании без правки этой статьи (russell-paradox
       win2014 -> spr2015: «frege-logic» -> «Frege, Gottlob: theorem…»). Если адреса
@@ -144,7 +144,7 @@ def links_kind(a: Doc, b: Doc) -> str:
 
 
 def classify(a: Versioned, b: Versioned) -> str:
-    """Вид изменения между двумя соседними снимками (таблица в PLAN.md §1.2).
+    """Вид изменения между двумя соседними снимками (таблица в docs/domain.md, раздел 2).
 
     Правкам только в ссылках нужны блоки (links_kind): по снимкам из БД (одни
     хеши) такая пара выходит minor, и Library.rebuild доуточняет её по Doc.
