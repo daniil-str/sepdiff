@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
@@ -39,6 +39,7 @@ class Response:
     status: int
     content: bytes
     url: str
+    headers: dict[str, str] = field(default_factory=dict)   # имена в нижнем регистре
 
     @property
     def text(self) -> str:
@@ -103,14 +104,15 @@ class Fetcher:
                     pass
         return min(self.delay * 2 ** attempt, MAX_BACKOFF)
 
-    def get(self, path: str) -> Response:
+    def get(self, path: str, headers: dict[str, str] | None = None) -> Response:
+        """GET с паузой robots.txt. 304 (условный запрос) и 404 — обычные ответы, не ошибки."""
         if not path.startswith("/") or path != path.lower() or path.startswith(DISALLOWED):
             raise ValueError(f"путь запрещён robots.txt SEP или не абсолютный: {path}")
         url = config.BASE_URL + path
         for attempt in range(self.retries + 1):
             self._wait_turn()
             try:
-                r = self.client.get(url)
+                r = self.client.get(url, headers=headers)
             except httpx.TransportError as exc:
                 self._network_errors += 1
                 if self._network_errors >= self.max_network_errors:
@@ -125,5 +127,6 @@ class Fetcher:
                     self.sleep(self._backoff(r, attempt))
                     continue
                 raise FetchError(f"{url}: HTTP {r.status_code}, повторы исчерпаны")
-            return Response(r.status_code, r.content, str(r.url))
+            return Response(r.status_code, r.content, str(r.url),
+                            {k.lower(): v for k, v in r.headers.items()})
         raise FetchError(f"{url}: повторы исчерпаны")

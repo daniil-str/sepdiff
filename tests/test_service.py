@@ -1,9 +1,10 @@
 import pytest
 from fakes import KANT, FakeFetcher, site
-from pages import MINOR, SUBSTANTIVE, page
+from pages import LIVE_PENDING, MINOR, SUBSTANTIVE, page
 from typer.testing import CliRunner
 
 from sepdiff.cli import app
+from sepdiff.fetcher import Response
 from sepdiff.service import Library, SepDiffError
 
 @pytest.fixture
@@ -18,7 +19,8 @@ def test_scan_finds_first_edition_by_bisection(lib):
     lib.scan("kant")
     calls = lib.fetcher.calls
     assert "/archives/fall2019/entries/kant/" not in calls   # раньше первого издания не ходим подряд
-    assert len([c for c in calls if "/entries/" in c]) == 7    # 4 пробы + 3 оставшихся издания
+    assert len([c for c in calls if c.startswith("/archives/") and "/entries/" in c]) == 7   # 4 пробы + 3
+    assert "/entries/kant/" in calls                           # и текущая версия на сайте
     assert len(set(calls)) == len(calls)                       # ничего не качаем дважды
     assert lib.scan("kant") == 0                               # второй раз — всё из кеша
 
@@ -54,6 +56,47 @@ def test_quick_scan_finds_every_revision_with_few_requests(tmp_path):
         assert [(r.edition.slug, r.kind) for r in full.revisions if r.kind != "markup_only"] == [
             (s, k) for s, k in quick if k != "markup_only"]
         assert full.unchecked_after == 0 and all(r.unchecked_before == 0 for r in full.revisions)
+
+
+def test_live_version_not_yet_archived(tmp_path):
+    pages = site({"kant": KANT})
+    pages["/entries/kant/"] = page(**LIVE_PENDING)   # на сайте уже новая редакция
+    with Library(tmp_path, fetcher=FakeFetcher(pages)) as lib:  # type: ignore[arg-type]
+        lib.init_editions()
+        lib.scan("kant")
+        live = lib.history("kant").live
+        assert live is not None and (live.base.slug, live.kind) == ("sum2021", "substantive")  # type: ignore[union-attr]
+        d = lib.diff("kant", "live")
+        assert (d.a.slug, d.b.slug, d.kind) == ("sum2021", "live", "substantive")
+        assert lib.show("kant", "live").revision_date == "2026-08-01"
+        assert "live" in [e.slug for e in lib.snapshot_editions("kant")]
+        assert lib.refresh_live("kant") == "cached"                 # не чаще раза в сутки
+        assert lib.refresh_live("kant", force=True) == "same"
+
+
+def test_live_uses_conditional_get_and_sees_removal(tmp_path):
+    class ConditionalSite(FakeFetcher):
+        gone = False
+
+        def get(self, path: str, headers: dict[str, str] | None = None) -> Response:
+            if path == "/entries/kant/":
+                self.calls.append(path)
+                if self.gone:
+                    return Response(404, b"", path)
+                if headers and headers.get("If-None-Match") == '"v1"':
+                    return Response(304, b"", path)
+                return Response(200, KANT["sum2021"], path, {"etag": '"v1"'})
+            return super().get(path, headers)
+
+    fetcher = ConditionalSite(site({"kant": KANT}))
+    with Library(tmp_path, fetcher=fetcher) as lib:  # type: ignore[arg-type]
+        lib.init_editions()
+        lib.scan("kant")
+        assert lib.history("kant").live.kind == "identical"  # type: ignore[union-attr]
+        assert lib.refresh_live("kant", force=True) == "not_modified"
+        fetcher.gone = True
+        assert lib.refresh_live("kant", force=True) == "gone"
+        assert lib.history("kant").live.kind == "removed"  # type: ignore[union-attr]
 
 
 def test_history(lib):

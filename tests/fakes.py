@@ -25,7 +25,7 @@ class FakeFetcher:
         self.pages = pages
         self.calls: list[str] = []
 
-    def get(self, path: str) -> Response:
+    def get(self, path: str, headers: dict[str, str] | None = None) -> Response:
         self.calls.append(path)
         body = self.pages.get(path)
         return Response(200 if body is not None else 404, body or b"", "https://plato.stanford.edu" + path)

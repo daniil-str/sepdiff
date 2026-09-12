@@ -52,6 +52,8 @@ SUBSTANTIVE = dict(MINOR, rev="Wed Jul 31, 2024",
                    deleted_para="", extra_bib="<li>Rohlf, M., 2024, <em>A New Book</em>.</li>")
 # Как kant fall2020 -> fall2023: текст статьи тот же, добавлена Related Entry.
 RELATED = dict(SUBSTANTIVE, extra_rel="<p>Kant, Immanuel: transcendental idealism</p>")
+# Текущая версия на сайте: новая существенная редакция, ещё не попавшая в архив.
+LIVE_PENDING = dict(RELATED, rev="Fri Aug 1, 2026")
 
 
 def page(**over: str) -> bytes:

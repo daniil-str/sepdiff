@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 -- квартальные издания SEP, по порядку выхода
@@ -84,6 +84,33 @@ CREATE TABLE jobs (
 MIGRATIONS = {
     2: "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);",   # seeded_at и т.п.
     3: "ALTER TABLE snapshots ADD COLUMN links_sha TEXT;",   # адреса ссылок apparatus (вёрстка 2016+)
+    # текущая версия статьи на сайте (/entries/<slug>/): одна строка на статью,
+    # перезаписывается при обновлении; etag/last_modified — для условных запросов
+    4: """
+    CREATE TABLE live (
+        entry_slug      TEXT PRIMARY KEY REFERENCES entries(slug),
+        http_status     INTEGER NOT NULL,
+        blob_sha        TEXT,
+        raw_sha         TEXT,
+        text_sha        TEXT,
+        body_sha        TEXT,
+        biblio_sha      TEXT,
+        apparatus_sha   TEXT,
+        struct_sha      TEXT,
+        links_sha       TEXT,
+        title           TEXT,
+        revision_date   TEXT,
+        date_source     TEXT,
+        word_count      INTEGER,
+        coverage        REAL,
+        extractor       TEXT,
+        extract_version INTEGER,
+        etag            TEXT,
+        last_modified   TEXT,
+        fetched_at      TEXT NOT NULL,   -- когда содержимое последний раз скачано
+        checked_at      TEXT NOT NULL    -- когда последний раз спрашивали сайт (в т.ч. 304)
+    );
+    """,
 }
 
 

@@ -1,4 +1,4 @@
-"""Командная строка: sepdiff init / seed / search / fetch / log / diff / show / import / serve."""
+"""Командная строка: sepdiff init / seed / search / fetch / live / log / diff / show / export-git / import / serve."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from .present import editions_word as _editions_word
 from .present import gap_texts
 from .present import plural as _plural
 from .present import stats_line as _stats_line
-from .service import History, Library, PairDiff, ScanEvent, SepDiffError
+from .service import History, Library, LiveRevision, PairDiff, ScanEvent, SepDiffError
 
 app = typer.Typer(
     help="История правок статей Stanford Encyclopedia of Philosophy — как git log.",
@@ -100,6 +100,8 @@ def fetch(
         "--edition", "-e", help="Скачать только эти издания (можно повторять). Без опции — все.")] = None,
     quick: Annotated[bool, typer.Option(
         "--quick", "-q", help="Только найти правки: не проверять издания между одинаковыми снимками.")] = False,
+    no_live: Annotated[bool, typer.Option(
+        "--no-live", help="Не проверять текущую версию на сайте.")] = False,
 ) -> None:
     """Скачать снимки статьи из архива SEP и построить её историю.
 
@@ -132,11 +134,79 @@ def fetch(
         typer.echo(f"{where:>10} {ev.edition or '':9s} {status}")
 
     with _library() as lib:
-        n = lib.scan(slug, edition, progress, deep=not quick)
+        n = lib.scan(slug, edition, progress, deep=not quick, live=not no_live)
         hist = lib.history(slug)
         real = sum(1 for r in hist.revisions if r.kind != "markup_only")
         typer.echo(f"Запросов: {n}. Снимков: {hist.snapshots}, ревизий: {real} "
                    f"(ещё {len(hist.revisions) - real} — только вёрстка сайта). История: sepdiff log {slug}")
+        _print_live(slug, hist.live)
+
+
+def _print_live(slug: str, live: LiveRevision | None) -> None:
+    """Строка про текущую версию на сайте: есть ли правки, которых ещё нет в архиве."""
+    if live is None:
+        return
+    checked = live.checked_at[:10]
+    if live.kind in ("identical", "markup_only"):
+        base = live.base.slug if live.base else "—"
+        typer.secho(f"  текущая версия на сайте совпадает с {base} (проверено {checked})", dim=True)
+        return
+    mark, color = KIND_STYLE.get(live.kind, ("◆", None))
+    after = f" после {live.base.slug}" if live.base else ""
+    typer.echo(typer.style(f"{mark} {'live':9s}", fg=color, bold=True)
+               + typer.style(f" на сайте, ещё не в архиве{after} (проверено {checked})  ", dim=True)
+               + typer.style(f"{live.kind:12s}", fg=color)
+               + f" {_stats_line(live.kind, live.stats)}"
+               + (typer.style(f"   sepdiff diff {slug} live", dim=True) if live.base and live.kind != "removed" else ""))
+
+
+@app.command()
+def live(
+    slug: str,
+    force: Annotated[bool, typer.Option(
+        "--force", "-f", help="Спросить сайт, даже если проверяли меньше суток назад.")] = False,
+) -> None:
+    """Текущая версия статьи на сайте: есть ли правки, которых ещё нет в архиве (1 запрос).
+
+    Правки попадают в архив только с выходом следующего квартального издания.
+    Сайт спрашивается не чаще раза в сутки и условным запросом: если страница
+    не менялась, она не скачивается заново.
+    """
+    outcomes = {
+        "cached": "Проверяли меньше суток назад — показываю сохранённое (--force — спросить заново).",
+        "not_modified": "Страница на сайте не менялась с прошлой проверки.",
+        "same": "Страница на сайте та же.",
+        "updated": "Скачана текущая версия со сайта.",
+        "gone": "На сайте статьи нет (404).",
+    }
+    with _library() as lib:
+        typer.secho(outcomes[lib.refresh_live(slug, force)], dim=True)
+        current = lib.live_revision(slug)
+        if current is None:
+            typer.echo(f"Сравнить не с чем — сначала история: sepdiff fetch {slug}")
+            return
+        _print_live(slug, current)
+
+
+@app.command(name="export-git")
+def export_git_cmd(
+    slug: str,
+    dest: Annotated[Path, typer.Argument(help="Пустой или несуществующий каталог для репозитория.")],
+    show_all: Annotated[bool, typer.Option("--all", "-a", help="Коммитить и правки только вёрстки.")] = False,
+    no_live: Annotated[bool, typer.Option("--no-live", help="Без текущей версии с сайта.")] = False,
+) -> None:
+    """История статьи как git-репозиторий: ревизия — коммит с датой издания, издание — тег.
+
+    Потом: git log, git diff spr2016 fall2020 --word-diff, git blame text.md.
+    """
+    from .export import export_git
+
+    with _library() as lib:
+        n = export_git(lib, slug, dest, include_markup=show_all, include_live=not no_live)
+        typer.echo(f"Коммитов: {n} → {dest}")
+        typer.secho(f"  cd {dest}\n  git log --oneline\n  git diff <издание> <издание> --word-diff\n"
+                    "  git blame text.md", dim=True)
+        typer.secho("Внутри тексты SEP (копирайт авторов) — не публикуйте репозиторий.", fg="yellow")
 
 
 @app.command(name="import")
@@ -159,6 +229,7 @@ def _gap_lines(unchanged: int, unchecked: int) -> None:
 def _print_log(hist: History, show_all: bool) -> None:
     typer.secho(f"{hist.title or hist.slug} ({hist.slug})", bold=True)
     typer.secho(f"снимков: {hist.snapshots} из {hist.editions} изданий", dim=True)
+    _print_live(hist.slug, hist.live)
     _gap_lines(hist.unchanged_after, hist.unchecked_after)
     hidden = 0
     for rev in reversed(hist.revisions):

@@ -12,6 +12,9 @@ SEASONS = ("spr", "sum", "fall", "win")
 _MONTH = {"spr": 3, "sum": 6, "fall": 9, "win": 12}
 _LABEL = {"spr": "Spring", "sum": "Summer", "fall": "Fall", "win": "Winter"}
 EDITION_RE = re.compile(r"(spr|sum|fall|win)(\d{4})")
+# Псевдо-издание: текущая версия статьи на сайте (/entries/<slug>/). Правки
+# попадают в архив только с выходом следующего квартального издания.
+LIVE = "live"
 
 
 @dataclass(frozen=True)
@@ -22,22 +25,28 @@ class Edition:
 
     @classmethod
     def parse(cls, slug: str) -> Edition:
+        if slug == LIVE:
+            return cls(LIVE, LIVE, 0)
         m = EDITION_RE.fullmatch(slug)
         if m is None:
-            raise ValueError(f"не издание SEP: {slug!r} (ожидается вида fall2024)")
+            raise ValueError(f"не издание SEP: {slug!r} (ожидается вида fall2024 или live)")
         return cls(slug, m.group(1), int(m.group(2)))
 
     @property
+    def is_live(self) -> bool:
+        return self.slug == LIVE
+
+    @property
     def key(self) -> tuple[int, int]:
-        return self.year, SEASONS.index(self.season)
+        return (9999, 0) if self.is_live else (self.year, SEASONS.index(self.season))
 
     @property
     def released_on(self) -> date:
-        return date(self.year, _MONTH[self.season], 21)
+        return date.today() if self.is_live else date(self.year, _MONTH[self.season], 21)
 
     @property
     def label(self) -> str:
-        return f"{_LABEL[self.season]} {self.year}"
+        return "Текущая версия (сайт)" if self.is_live else f"{_LABEL[self.season]} {self.year}"
 
 
 def parse_index(html: str) -> list[Edition]:

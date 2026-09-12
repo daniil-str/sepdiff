@@ -1,6 +1,7 @@
 import pytest
 from fakes import KANT, FakeFetcher, site
 from fastapi.testclient import TestClient
+from pages import LIVE_PENDING, page
 
 from sepdiff.web.app import create_app
 
@@ -68,6 +69,20 @@ def test_scan_history_and_diff(web):
 
     r = client.get("/e/kant/v/spr2021")
     assert "Immanuel Kant" in r.text and "Kant never travelled" in r.text
+
+
+def test_live_banner(tmp_path):
+    pages = site({"kant": KANT})
+    pages["/entries/kant/"] = page(**LIVE_PENDING)
+    app = create_app(tmp_path, fetcher_factory=lambda: FakeFetcher(pages), start_worker=False)  # type: ignore[arg-type, return-value]
+    with TestClient(app) as client:
+        client.post("/e/kant/scan", headers=HX)
+        assert app.state.worker.run_once()
+        text = client.get("/e/kant").text
+        assert "ещё нет в архиве" in text and "/e/kant/diff?a=sum2021&amp;b=live" in text
+        r = client.get("/e/kant/diff", params={"a": "sum2021", "b": "live"})
+        assert "Текущая версия (сайт)" in r.text and "существенная" in r.text
+        assert "plato.stanford.edu/entries/kant/" in client.get("/e/kant/v/live").text
 
 
 def test_errors_and_csrf(web):

@@ -13,6 +13,20 @@
   {% endif %}
 </div>
 
+{% if hist and hist.live %}{% set lv = hist.live %}
+  {% if lv.kind in TEXT_KINDS or lv.kind == "removed" %}
+  <div class="live-banner">
+    <span class="kind {{ lv.kind }}" title="{{ KIND_HINT[lv.kind] }}">{{ KIND_LABEL[lv.kind] }}</span>
+    На сайте есть правка, которой ещё нет в архиве{% if lv.base %} (после {{ lv.base.label }}){% endif %}:
+    {{ stats_line(lv.kind, lv.stats) or "статья снята с сайта" }}.
+    {% if lv.base and lv.kind != "removed" %}<a href="/e/{{ slug }}/diff?a={{ lv.base.slug }}&amp;b=live">Что изменилось →</a>{% endif %}
+    <span class="muted">проверено {{ lv.checked_at[:10] }}; в архив попадёт со следующим изданием</span>
+  </div>
+  {% elif lv.base %}
+  <p class="muted live-same">Текущая версия на сайте совпадает с {{ lv.base.label }} (проверено {{ lv.checked_at[:10] }}).</p>
+  {% endif %}
+{% endif %}
+
 <section id="scan" class="scan">
   {% if job %}
     {% include "_progress.html" %}

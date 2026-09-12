@@ -3,7 +3,7 @@
 {% block main %}
 <h1><a href="/e/{{ slug }}" class="plain">{{ doc.title }}</a></h1>
 <div class="meta"><code>{{ edition }}</code> · {{ doc.pubinfo or ("дата ревизии: " ~ (doc.revision_date or "неизвестна")) }}
-  · <a href="https://plato.stanford.edu/archives/{{ edition }}/entries/{{ slug }}/" rel="noopener noreferrer">оригинал ↗</a></div>
+  · <a href="https://plato.stanford.edu/{% if edition != 'live' %}archives/{{ edition }}/{% endif %}entries/{{ slug }}/" rel="noopener noreferrer">оригинал ↗</a></div>
 <p class="muted">Извлечённый текст — то, что сравнивает diff (без навигации сайта, формулы — как текст).</p>
 <article class="version">
   {% for blk in doc.body %}

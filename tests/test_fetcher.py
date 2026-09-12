@@ -51,6 +51,18 @@ def test_rate_limit_survives_restart(tmp_path):
     assert clock.sleeps == [pytest.approx(3.0)]
 
 
+def test_conditional_get():
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.headers.get("if-none-match") == '"v1"':
+            return httpx.Response(304)
+        return httpx.Response(200, content=b"page", headers={"ETag": '"v1"'})
+
+    f, _, _ = make(handler)
+    first = f.get("/entries/kant/")
+    assert first.status == 200 and first.headers["etag"] == '"v1"'
+    assert f.get("/entries/kant/", headers={"If-None-Match": '"v1"'}).status == 304
+
+
 def test_404_is_a_normal_answer():
     f, _, _ = make(lambda _r: httpx.Response(404))
     assert f.get("/archives/fall1997/entries/kant/").status == 404

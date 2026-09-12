@@ -11,7 +11,7 @@ import re
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field, fields
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from selectolax.lexbor import LexborHTMLParser
@@ -19,7 +19,7 @@ from selectolax.lexbor import LexborHTMLParser
 from . import config, db
 from .blobs import BlobStore
 from .diffing import Op, PairStats, block_diff, classify, pair_stats
-from .editions import Edition, parse_index
+from .editions import LIVE, Edition, parse_index
 from .extract import EXTRACT_VERSION, Doc, extract
 from .fetcher import FetchError, Fetcher
 from .normalize import normalize
@@ -28,6 +28,7 @@ SLUG_RE = re.compile(r"[a-z0-9][a-z0-9.-]*")
 _IMPORT_RE = re.compile(r"([a-z0-9][a-z0-9.-]*)\.((?:spr|sum|fall|win)\d{4})\.(html|404)")
 _NOT_ENTRIES = {"contents", "archives", "report"}   # служебные файлы в кеше спайка
 COARSE_STEP = 8   # грубый проход: каждое 8-е издание, примерно раз в два года
+LIVE_MAX_AGE = timedelta(hours=24)   # текущую версию на сайте спрашиваем не чаще раза в сутки
 
 
 class SepDiffError(Exception):
@@ -93,6 +94,16 @@ class Revision:
 
 
 @dataclass
+class LiveRevision:
+    """Текущая версия статьи на сайте относительно последнего скачанного издания."""
+    base: Edition | None       # с чем сравниваем; None — архивных снимков нет
+    kind: str                  # как у classify; removed — на сайте статьи нет (404)
+    stats: PairStats
+    revision_date: str | None
+    checked_at: str            # когда последний раз спрашивали сайт
+
+
+@dataclass
 class History:
     slug: str
     title: str | None
@@ -101,6 +112,7 @@ class History:
     unchecked_after: int = 0
     snapshots: int = 0
     editions: int = 0
+    live: LiveRevision | None = None       # текущая версия на сайте, если скачана
 
 
 @dataclass
@@ -273,7 +285,11 @@ class Library:
         """Издания, в которых статья скачана и есть (HTTP 200), по порядку выхода."""
         have = {r[0] for r in self.conn.execute(
             "SELECT edition_slug FROM snapshots WHERE entry_slug = ? AND http_status = 200", (slug,))}
-        return [e for e in self.editions() if e.slug in have]
+        out = [e for e in self.editions() if e.slug in have]
+        live = self._live_row(slug)
+        if live is not None and live["http_status"] == 200:
+            out.append(Edition.parse(LIVE))
+        return out
 
     # ------------------------------------------------------------------
     # Сканирование
@@ -312,7 +328,7 @@ class Library:
         return r.status
 
     def scan(self, slug: str, only: list[str] | None = None, progress: Progress | None = None,
-             deep: bool = True) -> int:
+             deep: bool = True, live: bool = True) -> int:
         """Скачать недостающие снимки статьи и пересчитать историю. Возвращает число запросов.
 
         Без `only` — по фазам (PLAN.md §4.2); история пересчитывается после
@@ -381,6 +397,9 @@ class Library:
 
         self._mark_scanned(slug, "complete" if deep and not only else "partial")
         self.rebuild(slug)
+        if live and not only:
+            # плюс текущая версия на сайте — правки, которых ещё нет в архиве (раз в сутки)
+            requests += self.refresh_live(slug) != "cached"
         return requests
 
     @staticmethod
@@ -572,16 +591,98 @@ class Library:
                 unchanged_before=unchanged, unchecked_before=unchecked))
             prev_i = i
         hist = History(slug, title_row["title"] if title_row else None, revisions,
-                       snapshots=sum(1 for s in snaps.values() if s.http_status == 200), editions=len(eds))
+                       snapshots=sum(1 for s in snaps.values() if s.http_status == 200), editions=len(eds),
+                       live=self.live_revision(slug))
         if prev_i is not None and revisions[-1].kind != "removed":
             hist.unchanged_after, hist.unchecked_after = gap(prev_i + 1, len(eds))
         return hist
+
+    # ------------------------------------------------------------------
+    # Текущая версия на сайте
+    # ------------------------------------------------------------------
+
+    def _live_row(self, slug: str) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT * FROM live WHERE entry_slug = ?", (slug,)).fetchone()
+
+    def _last_archived(self, slug: str) -> Snap | None:
+        return next((s for s in reversed(self._snaps(slug)) if s.http_status == 200), None)
+
+    def refresh_live(self, slug: str, force: bool = False) -> str:
+        """Скачать текущую версию статьи с сайта (/entries/<slug>/), не чаще раза в сутки.
+
+        Условный запрос (If-None-Match / If-Modified-Since): если страница не
+        менялась, сайт отвечает 304 без тела. Возвращает, что произошло:
+        cached (спрашивали меньше суток назад) | not_modified | same | updated | gone.
+        """
+        check_slug(slug)
+        self._ensure_entry(slug)
+        row = self._live_row(slug)
+        if row is not None and not force:
+            if datetime.now(UTC) - datetime.fromisoformat(row["checked_at"]) < LIVE_MAX_AGE:
+                return "cached"
+        headers: dict[str, str] = {}
+        if row is not None and row["http_status"] == 200:
+            if row["etag"]:
+                headers["If-None-Match"] = row["etag"]
+            if row["last_modified"]:
+                headers["If-Modified-Since"] = row["last_modified"]
+        r = self.fetcher.get(f"/entries/{slug}/", headers=headers or None)
+        stamp = _now()
+        if r.status == 304:
+            with self.conn:
+                self.conn.execute("UPDATE live SET checked_at = ? WHERE entry_slug = ?", (stamp, slug))
+            return "not_modified"
+        if r.status not in (200, 404):
+            raise FetchError(f"{r.url}: HTTP {r.status}")
+        values: dict[str, object] = {
+            "entry_slug": slug, "http_status": r.status, "etag": r.headers.get("etag"),
+            "last_modified": r.headers.get("last-modified"), "fetched_at": stamp, "checked_at": stamp}
+        outcome = "gone"
+        if r.status == 200:
+            blob = self.blobs.put(r.content)
+            outcome = "same" if row is not None and row["blob_sha"] == blob else "updated"
+            doc = extract(r.content)
+            self._docs[blob] = doc
+            values |= {"blob_sha": blob, **_doc_fields(doc)}
+        cols = ", ".join(values)
+        with self.conn:
+            self.conn.execute(f"INSERT OR REPLACE INTO live ({cols}) VALUES ({', '.join('?' * len(values))})",
+                              list(values.values()))
+        return outcome
+
+    def live_revision(self, slug: str) -> LiveRevision | None:
+        """Чем текущая версия на сайте отличается от последнего скачанного издания."""
+        row = self._live_row(slug)
+        if row is None:
+            return None
+        base = self._last_archived(slug)
+        base_ed = Edition.parse(base.edition_slug) if base else None
+        if row["http_status"] != 200:
+            return LiveRevision(base_ed, "removed", PairStats(), None, row["checked_at"]) if base else None
+        live_doc = self._doc(row["blob_sha"])
+        if base is None:
+            return LiveRevision(None, "created", PairStats(words_added=live_doc.word_count),
+                                live_doc.revision_date, row["checked_at"])
+        base_doc = self._doc(base.blob_sha)  # type: ignore[arg-type]
+        kind = classify(base_doc, live_doc)
+        stats = PairStats()
+        if kind not in ("identical", "markup_only"):
+            stats = pair_stats(block_diff(base_doc.body, live_doc.body), block_diff(base_doc.biblio, live_doc.biblio),
+                               block_diff(base_doc.apparatus, live_doc.apparatus))
+        return LiveRevision(base_ed, kind, stats, live_doc.revision_date, row["checked_at"])
 
     # ------------------------------------------------------------------
     # Diff и просмотр
     # ------------------------------------------------------------------
 
     def _snapshot(self, slug: str, edition: str) -> Snap:
+        if edition == LIVE:
+            live = self._live_row(slug)
+            if live is None:
+                raise SepDiffError(f"текущая версия {slug} не скачана — скачать: sepdiff live {slug}")
+            if live["http_status"] != 200:
+                raise SepDiffError(f"на сайте статьи {slug} сейчас нет (HTTP {live['http_status']})")
+            return Snap(edition_slug=LIVE, **{k: live[k] for k in _SNAP_FIELDS if k in live.keys()})
         self._edition(edition)
         row = self.conn.execute("SELECT * FROM snapshots WHERE entry_slug = ? AND edition_slug = ?",
                                 (slug, edition)).fetchone()
@@ -595,6 +696,11 @@ class Library:
         """Diff двух изданий; с одним изданием — его ревизия относительно предыдущего снимка."""
         check_slug(slug)
         self._ensure_fresh(slug)
+        if b is None and a == LIVE:
+            base = self._last_archived(slug)
+            if base is None:
+                raise SepDiffError(f"у {slug} нет архивных снимков, сравнивать текущую версию не с чем")
+            a, b = base.edition_slug, LIVE
         if b is None:
             b = a
             row = self.conn.execute("SELECT prev_edition FROM revisions WHERE entry_slug = ? AND edition_slug = ?",

@@ -47,6 +47,9 @@ button:hover { filter: brightness(1.1); }
 .notice form { margin-top: .6rem; }
 
 .meta { color: var(--mute); margin-bottom: 1rem; }
+.live-banner { padding: .7rem 1rem; border-radius: 8px; border: 1px solid var(--sub); background: var(--card);
+               margin: 0 0 1rem; }
+.live-banner .muted { display: block; font-size: .85rem; margin-top: .2rem; }
 .scan { margin: 1rem 0 1.5rem; }
 .scan .muted { margin-left: .5rem; font-size: .9rem; }
 .job { padding: .7rem 1rem; border-radius: 8px; background: var(--card); border: 1px solid var(--line); }

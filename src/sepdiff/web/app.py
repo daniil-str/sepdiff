@@ -103,6 +103,7 @@ def create_app(
     templates = Jinja2Templates(directory=HERE / "templates")
     templates.env.globals.update(
         KIND_LABEL=KIND_LABEL, KIND_MARK=KIND_MARK, KIND_HINT=KIND_HINT, TEXT_KINDS=TEXT_KINDS,
+        stats_line=stats_line,
         htmx_src="/static/htmx.min.js" if (HERE / "static" / "htmx.min.js").exists() else HTMX_CDN,
         # Версия в URL стилей: иначе браузер держит старый CSS из кеша после обновления.
         css_version=int((HERE / "static" / "style.css").stat().st_mtime),
