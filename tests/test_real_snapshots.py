@@ -61,7 +61,9 @@ def _doc(entry: str, edition: str) -> Doc:
     return extract(raw)
 
 
-PAIRS = [(entry, a, b) for entry in ARCHINFO for a, b in zip(_editions(entry), _editions(entry)[1:])]
+PAIRS = [
+    (entry, a, b) for entry in ARCHINFO for a, b in zip(_editions(entry), _editions(entry)[1:], strict=False)
+]
 
 
 @pytest.mark.skipif(not PAIRS, reason="нет локальных снимков (data/sepdiff.db или data/spike/)")

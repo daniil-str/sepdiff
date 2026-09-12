@@ -125,11 +125,14 @@ def test_apparatus_links_count():
 
 def test_supplementary_documents():
     base = page()
-    with_supp = base.replace(b'<div id="toc"><ul>', b'<div id="toc"><ul><li><a href="supplement.html">Supplement</a></li>')
+    with_supp = base.replace(
+        b'<div id="toc"><ul>', b'<div id="toc"><ul><li><a href="supplement.html">Supplement</a></li>'
+    )
     a, b = extract(base), extract(with_supp)
     assert b.supplements == ["supplement.html"] and a.supplements == []
     assert a.text_sha == b.text_sha and classify(a, b) == "minor"   # новый доп. документ — правка
-    notes = extract(page(extra_para='<p>See <a href="notes.html#note-1">note 1</a> and <a href="../hume/">Hume</a>.</p>'))
+    extra_para = '<p>See <a href="notes.html#note-1">note 1</a> and <a href="../hume/">Hume</a>.</p>'
+    notes = extract(page(extra_para=extra_para))
     assert notes.supplements == ["notes.html"]
 
 

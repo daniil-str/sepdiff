@@ -161,7 +161,8 @@ def _print_live(slug: str, live: LiveRevision | None) -> None:
                + typer.style(f" на сайте, ещё не в архиве{after} (проверено {checked})  ", dim=True)
                + typer.style(f"{live.kind:12s}", fg=color)
                + f" {_stats_line(live.kind, live.stats)}"
-               + (typer.style(f"   sepdiff diff {slug} live", dim=True) if live.base and live.kind != "removed" else ""))
+               + (typer.style(f"   sepdiff diff {slug} live", dim=True)
+                  if live.base and live.kind != "removed" else ""))
 
 
 @app.command()
@@ -398,7 +399,9 @@ def diff(
     slug: str,
     a: Annotated[str, typer.Argument(help="Издание «было» (или единственное — тогда с предыдущим снимком).")],
     b: Annotated[str | None, typer.Argument(help="Издание «стало».")] = None,
-    context: Annotated[int, typer.Option("--context", "-C", help="Сколько неизменённых абзацев показывать вокруг правки.")] = 1,
+    context: Annotated[
+        int, typer.Option("--context", "-C", help="Сколько неизменённых абзацев показывать вокруг правки.")
+    ] = 1,
 ) -> None:
     """Что изменилось в статье между двумя изданиями.
 
@@ -422,7 +425,8 @@ def show(slug: str, edition: str) -> None:
                 typer.secho(blk.text, bold=True)
             else:
                 typer.echo(blk.text)
-        for name, blocks in (("Bibliography", doc.biblio), ("Other Internet Resources · Related Entries", doc.apparatus)):
+        sections = (("Bibliography", doc.biblio), ("Other Internet Resources · Related Entries", doc.apparatus))
+        for name, blocks in sections:
             if blocks:
                 typer.echo()
                 typer.secho(f"── {name} ──", bold=True)

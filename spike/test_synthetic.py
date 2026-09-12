@@ -127,7 +127,8 @@ changed23 = [o for o in ops23 if o.kind != "equal"]
 check(len(changed23) == 1 and changed23[0].kind == "mod",
       f"v2->v3: ровно один изменённый блок (получили {[o.kind for o in changed23]})")
 st23 = pair_stats(d2, d3, ops23, block_diff(d2.biblio, d3.biblio))
-check((st23.words_added, st23.words_removed) == (1, 1), f"v2->v3: +1/−1 слово (получили +{st23.words_added}/−{st23.words_removed})")
+check((st23.words_added, st23.words_removed) == (1, 1),
+      f"v2->v3: +1/−1 слово (получили +{st23.words_added}/−{st23.words_removed})")
 check(st23.sections == ["1. Life and works"], f"v2->v3: затронут §1 (получили {st23.sections})")
 
 ops34 = block_diff(d3.body, d4.body)

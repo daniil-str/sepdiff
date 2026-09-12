@@ -57,7 +57,7 @@ def block_diff(a: list[Block], b: list[Block]) -> list[Op]:
     ops: list[Op] = []
     for tag, i1, i2, j1, j2 in sm.get_opcodes():
         if tag == "equal":
-            ops += [Op("equal", a[i], b[j]) for i, j in zip(range(i1, i2), range(j1, j2))]
+            ops += [Op("equal", a[i], b[j]) for i, j in zip(range(i1, i2), range(j1, j2), strict=True)]
         elif tag == "delete":
             ops += [Op("del", a[i], None) for i in range(i1, i2)]
         elif tag == "insert":

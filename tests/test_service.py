@@ -7,6 +7,7 @@ from sepdiff.cli import app
 from sepdiff.fetcher import Response
 from sepdiff.service import Library, SepDiffError
 
+
 @pytest.fixture
 def lib(tmp_path):
     fetcher = FakeFetcher(site({"kant": KANT}))

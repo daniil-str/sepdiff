@@ -93,6 +93,7 @@ uv run sepdiff serve                 # http://localhost:8000/
 
 ```bash
 uv run pytest
+uv run ruff check
 ```
 
 `tests/test_real_snapshots.py` сверяет классификатор с эталоном SEP на
