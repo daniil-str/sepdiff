@@ -108,5 +108,17 @@ del { background: var(--del); color: var(--delfg); }
 details.diff-extra { margin-top: 1.5rem; }
 details.diff-extra summary { cursor: pointer; font-weight: 600; }
 
+/* T3: переключатель «построчно / рядом» — состояние в ?view=, поэтому и
+   переключатель, и сама раскладка живут в CSS, без отдельного JS. */
+.view-toggle { display: flex; gap: .8rem; font: .85rem var(--sans); color: var(--mute); }
+.view-toggle label { display: flex; align-items: center; gap: .25rem; cursor: pointer; }
+.diff.side { display: grid; grid-template-columns: 1fr 1fr; gap: 0 1rem; }
+.diff.side .full { grid-column: 1 / -1; }
+.diff.side .blk.empty { background: transparent; border-color: transparent; }
+@media (max-width: 700px) {
+  .diff.side { grid-template-columns: 1fr; }
+  .diff.side .blk.empty { display: none; }
+}
+
 .version { font: 17px/1.65 var(--serif); }
 .version h3 { font-family: var(--sans); font-size: 1rem; margin-top: 2rem; }

@@ -59,7 +59,7 @@ def test_scan_history_and_diff(web):
 
     r = client.get("/e/kant/diff/pane", params={"a": "spr2020", "b": "spr2021"}, headers=HX)
     assert "существенная" in r.text and "Kant never travelled" in r.text
-    assert r.headers["HX-Push-Url"] == "/e/kant/diff?a=spr2020&b=spr2021"
+    assert r.headers["HX-Push-Url"] == "/e/kant/diff?a=spr2020&b=spr2021&view=line"
 
     r = client.get("/e/kant/diff/pane", params={"a": "fall2019", "b": "spr2021"}, headers=HX)
     assert r.status_code == 200 and 'class="err"' in r.text      # снимка нет — ошибка в панели
@@ -69,6 +69,30 @@ def test_scan_history_and_diff(web):
 
     r = client.get("/e/kant/v/spr2021")
     assert "Immanuel Kant" in r.text and "Kant never travelled" in r.text
+
+
+def test_diff_side_by_side_view(web):
+    # T3: переключатель «построчно / рядом», состояние хранится в ?view=.
+    client, worker = web
+    client.post("/e/kant/scan", headers=HX)
+    assert worker.run_once()
+
+    r = client.get("/e/kant/diff", params={"b": "win2020"})               # по умолчанию — построчно
+    assert 'name="view" value="line" checked' in r.text
+    assert 'class="diff">' in r.text and "<del>lived</del>" in r.text
+
+    r = client.get("/e/kant/diff", params={"b": "win2020", "view": "side"})
+    assert 'name="view" value="side" checked' in r.text
+    assert 'class="diff side">' in r.text
+    assert "<del>lived</del>" in r.text and "<ins>spent</ins>" in r.text  # разнесены по разным колонкам
+
+    r = client.get("/e/kant/diff/pane", params={"a": "spr2020", "b": "spr2021", "view": "side"}, headers=HX)
+    assert 'class="diff side">' in r.text
+    assert r.headers["HX-Push-Url"] == "/e/kant/diff?a=spr2020&b=spr2021&view=side"
+
+    # неизвестное значение view не ломает страницу — трактуется как «построчно»
+    r = client.get("/e/kant/diff", params={"b": "win2020", "view": "bogus"})
+    assert 'class="diff">' in r.text
 
 
 def test_live_banner(tmp_path):

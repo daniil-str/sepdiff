@@ -15,6 +15,10 @@
       {% for e in editions %}<option value="{{ e.slug }}"{% if e.slug == b %} selected{% endif %}>{{ e.label }}</option>{% endfor %}
     </select>
   </label>
+  <span class="view-toggle">
+    <label><input type="radio" name="view" value="line"{% if view != "side" %} checked{% endif %}> построчно</label>
+    <label><input type="radio" name="view" value="side"{% if view == "side" %} checked{% endif %}> рядом</label>
+  </span>
   <noscript><button>Сравнить</button></noscript>
   <a href="/e/{{ slug }}" class="back">← история</a>
 </form>
