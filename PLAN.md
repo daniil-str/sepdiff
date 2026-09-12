@@ -223,7 +223,8 @@ HTTPS_PROXY=http://127.0.0.1:2080 uv run sepdiff fetch russell-paradox --quick
 
 - **T2. Дополнительные документы статьи** — схема БД v6, `fetch --supplements`,
   участие в `classify`; закрыло оба известных промаха против archinfo (`frege`
-  `spr2025`→`sum2025`, `turing-machine` `fall2021`→`win2021`). `docs/journal.md` §19.
+  `spr2025`→`sum2025`, `turing-machine` `fall2021`→`win2021`).
+  [PR #5](https://github.com/daniil-str/sepdiff/pull/5). `docs/journal.md` §19.
 
 ### T1. Одна команда проверки (S, без сети)
 
