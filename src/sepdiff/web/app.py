@@ -25,7 +25,7 @@ from ..fetcher import Fetcher
 from ..present import KIND_HINT, KIND_LABEL, KIND_MARK, TEXT_KINDS, eta_text, gap_texts, stats_line
 from ..service import SLUG_RE, History, Library, PairDiff, SepDiffError, check_slug
 from .feed import atom, rfc3339
-from .render import changed, ops_html
+from .render import changed, ops_html, ops_html_side
 
 HERE = Path(__file__).parent
 HTMX_CDN = "https://cdn.jsdelivr.net/npm/htmx.org@2.0.4/dist/htmx.min.js"
@@ -232,9 +232,10 @@ def create_app(
     # Diff и текст версии
     # ------------------------------------------------------------------
 
-    def diff_ctx(lib: Library, slug: str, a: str | None, b: str | None) -> dict[str, object]:
+    def diff_ctx(lib: Library, slug: str, a: str | None, b: str | None, view: str | None = None) -> dict[str, object]:
         check_slug(slug)
         a, b = a or None, b or None
+        view = "side" if view == "side" else "line"
         if a is None and b is None:
             hist = lib.history(slug)
             candidates = [r for r in hist.revisions if r.kind in TEXT_KINDS and r.prev_edition]
@@ -253,29 +254,33 @@ def create_app(
                 error = "у статьи нет ревизий с правками текста"
         except SepDiffError as exc:
             error = str(exc)
-        ctx: dict[str, object] = {"slug": slug, "d": d, "error": error,
+        ctx: dict[str, object] = {"slug": slug, "d": d, "error": error, "view": view,
                                   "a": d.a.slug if d else a, "b": d.b.slug if d else b,
                                   "title": (d.title if d else None) or lib.entry_title(slug) or slug}
         if d is not None:
+            render = ops_html_side if view == "side" else ops_html
             ctx.update(
-                body_html=ops_html(d.body), biblio_html=ops_html(d.biblio, 0), apparatus_html=ops_html(d.apparatus, 0),
+                body_html=render(d.body), biblio_html=render(d.biblio, 0), apparatus_html=render(d.apparatus, 0),
                 body_changed=changed(d.body), biblio_changed=changed(d.biblio),
                 apparatus_changed=changed(d.apparatus))
         return ctx
 
     @app.get("/e/{slug}/diff", response_class=HTMLResponse)
-    def diff_page(request: Request, slug: str, lib: Lib, a: str | None = None, b: str | None = None) -> HTMLResponse:
-        ctx = diff_ctx(lib, slug, a, b)
+    def diff_page(request: Request, slug: str, lib: Lib, a: str | None = None, b: str | None = None,
+                  view: str | None = None) -> HTMLResponse:
+        ctx = diff_ctx(lib, slug, a, b, view)
         editions = list(reversed(lib.snapshot_editions(slug)))
         if not editions:
             raise SepDiffError(f"у статьи {slug} нет скачанных снимков")
         return page(request, "diff.html", editions=editions, **ctx)
 
     @app.get("/e/{slug}/diff/pane", response_class=HTMLResponse)
-    def diff_pane(request: Request, slug: str, lib: Lib, a: str | None = None, b: str | None = None) -> HTMLResponse:
-        ctx = diff_ctx(lib, slug, a, b)
+    def diff_pane(request: Request, slug: str, lib: Lib, a: str | None = None, b: str | None = None,
+                  view: str | None = None) -> HTMLResponse:
+        ctx = diff_ctx(lib, slug, a, b, view)
         response = page(request, "_pane.html", **ctx)
-        response.headers["HX-Push-Url"] = f"/e/{slug}/diff?" + urlencode({"a": a or "", "b": b or ""})
+        response.headers["HX-Push-Url"] = (
+            f"/e/{slug}/diff?" + urlencode({"a": a or "", "b": b or "", "view": ctx["view"]}))
         return response
 
     @app.get("/e/{slug}/v/{edition}", response_class=HTMLResponse)

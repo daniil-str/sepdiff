@@ -14,18 +14,18 @@
 <p class="muted">Текст статьи не изменился — отличается только вёрстка сайта.</p>
 {% endif %}
 
-{% if body_changed %}<article class="diff">{{ body_html }}</article>{% endif %}
+{% if body_changed %}<article class="diff{% if view == "side" %} side{% endif %}">{{ body_html }}</article>{% endif %}
 
 {% if biblio_changed %}
 <details class="diff-extra" open>
   <summary>Библиография: +{{ st.biblio_added }} −{{ st.biblio_removed }} ~{{ st.biblio_modified }}</summary>
-  <div class="diff">{{ biblio_html }}</div>
+  <div class="diff{% if view == "side" %} side{% endif %}">{{ biblio_html }}</div>
 </details>
 {% endif %}
 {% if apparatus_changed %}
 <details class="diff-extra">
   <summary>Other Internet Resources · Related Entries: изменений {{ st.apparatus_changed }}</summary>
-  <div class="diff">{{ apparatus_html }}</div>
+  <div class="diff{% if view == "side" %} side{% endif %}">{{ apparatus_html }}</div>
 </details>
 {% endif %}
 {% endif %}
