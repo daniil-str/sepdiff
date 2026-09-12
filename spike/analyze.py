@@ -479,7 +479,7 @@ def block_diff(a: list[Block], b: list[Block]) -> list[Op]:
     ops: list[Op] = []
     for tag, i1, i2, j1, j2 in sm.get_opcodes():
         if tag == "equal":
-            ops += [Op("equal", a[i], b[j]) for i, j in zip(range(i1, i2), range(j1, j2))]
+            ops += [Op("equal", a[i], b[j]) for i, j in zip(range(i1, i2), range(j1, j2), strict=True)]
         elif tag == "delete":
             ops += [Op("del", a[i], None) for i in range(i1, i2)]
         elif tag == "insert":
@@ -724,7 +724,7 @@ def analyze_entry(entry: str) -> tuple[int, int]:
     print(f"\n{'пара':20s} {'наш вердикт':12s} {'archinfo':12s}      {'+слов':>7s} {'−слов':>7s} "
           f"{'блоков':>6s}  разделы  ссылки")
     checks = fails = 0
-    for a, b in zip(docs, docs[1:]):
+    for a, b in zip(docs, docs[1:], strict=False):
         body_ops = block_diff(a.body, b.body)
         biblio_ops = block_diff(a.biblio, b.biblio)
         app_ops = block_diff(a.apparatus, b.apparatus)

@@ -98,8 +98,10 @@ def position(conn: sqlite3.Connection, job: Job) -> int:
     if job.state != "queued":
         return 0
     # job может быть устаревшим снимком: воркер уже взял его в работу — себя не считаем.
-    (n,) = conn.execute("SELECT count(*) FROM jobs WHERE id != ? AND (state = 'running' OR (state = 'queued' AND id < ?))",
-                        (job.id, job.id)).fetchone()
+    (n,) = conn.execute(
+        "SELECT count(*) FROM jobs WHERE id != ? AND (state = 'running' OR (state = 'queued' AND id < ?))",
+        (job.id, job.id),
+    ).fetchone()
     return n
 
 

@@ -543,7 +543,7 @@ class Library:
                 fetch: Callable[[Edition, str], int]) -> None:
         """Между соседними скачанными снимками с разным содержимым — бинарный поиск точек правок."""
         have = sorted(i for i, e in enumerate(span) if e.slug in known)
-        stack = list(reversed(list(zip(have, have[1:]))))
+        stack = list(reversed(list(zip(have, have[1:], strict=False))))
         while stack:
             i, j = stack.pop()
             if j - i < 2 or self._signature(slug, span[i].slug) == self._signature(slug, span[j].slug):
