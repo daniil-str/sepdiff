@@ -1,4 +1,4 @@
-"""Командная строка: sepdiff init/seed/search/fetch/live/log/diff/show/symbols/export-git/import/serve."""
+"""Командная строка: sepdiff init/seed/search/fetch/live/log/diff/show/sections/symbols/export-git/import/serve."""
 
 from __future__ import annotations
 
@@ -10,13 +10,13 @@ from typing import Annotated
 
 import typer
 
-from .diffing import Op, word_ops
+from .diffing import Op, filter_section, word_ops
 from .fetcher import FetchError
 from .present import editions_word as _editions_word
 from .present import gap_texts
 from .present import plural as _plural
 from .present import stats_line as _stats_line
-from .service import Change, History, Library, LiveRevision, PairDiff, ScanEvent, SepDiffError
+from .service import Change, History, Library, LiveRevision, PairDiff, ScanEvent, SepDiffError, touches_section
 
 app = typer.Typer(
     help="История правок статей Stanford Encyclopedia of Philosophy — как git log.",
@@ -300,15 +300,21 @@ def _gap_lines(unchanged: int, unchecked: int) -> None:
         typer.secho(f"  ┆ {text}", fg="yellow" if unchecked_line else None, dim=True)
 
 
-def _print_log(hist: History, show_all: bool, predecessors: list[tuple[str, str | None]] | None = None) -> None:
+def _print_log(hist: History, show_all: bool, predecessors: list[tuple[str, str | None]] | None = None,
+                section: str | None = None) -> None:
     typer.secho(f"{hist.title or hist.slug} ({hist.slug})", bold=True)
     typer.secho(f"снимков: {hist.snapshots} из {hist.editions} изданий", dim=True)
     for slug, title in predecessors or []:   # T5: сюда переехала снятая SEP статья
         typer.secho(f"  ← преемница снятой статьи {slug} ({title or slug}): sepdiff log {slug}", fg="blue")
+    if section is not None:
+        typer.secho(f"только раздел «{section}» (T9)", dim=True)
     _print_live(hist.slug, hist.live)
     _gap_lines(hist.unchanged_after, hist.unchecked_after)
-    hidden = 0
+    hidden = skipped_section = 0
     for rev in reversed(hist.revisions):
+        if section is not None and not touches_section(rev, section):
+            skipped_section += 1
+            continue
         if rev.kind == "markup_only" and not show_all:
             hidden += 1
             rev_line = None
@@ -329,16 +335,39 @@ def _print_log(hist: History, show_all: bool, predecessors: list[tuple[str, str 
     if hidden:
         what = _plural(hidden, "скрыта 1 ревизия", f"скрыто {hidden} ревизии", f"скрыто {hidden} ревизий")
         typer.secho(f"({what} markup_only — только вёрстка сайта; показать: --all)", dim=True)
+    if section is not None and skipped_section:
+        what = _plural(skipped_section, "ещё 1 ревизия не задела", f"ещё {skipped_section} ревизии не задели",
+                       f"ещё {skipped_section} ревизий не задели")
+        typer.secho(f"({what} раздел «{section}»)", dim=True)
+
+
+def _check_section(lib: Library, slug: str, section: str) -> None:
+    known = lib.sections(slug)
+    if section not in known:
+        raise SepDiffError(f"нет раздела {section!r}. Разделы статьи ({slug}): "
+                           + (", ".join(known) if known else "—"))
 
 
 @app.command()
 def log(
     slug: str,
     show_all: Annotated[bool, typer.Option("--all", "-a", help="Показывать и markup_only.")] = False,
+    section: Annotated[str | None, typer.Option(
+        "--section", "-s", help="Только ревизии, задевшие этот раздел (T9). Список: sepdiff sections.")] = None,
 ) -> None:
     """История ревизий статьи, новые сверху."""
     with _library() as lib:
-        _print_log(lib.history(slug), show_all, lib.predecessors(slug))
+        if section is not None:
+            _check_section(lib, slug, section)
+        _print_log(lib.history(slug), show_all, lib.predecessors(slug), section)
+
+
+@app.command()
+def sections(slug: str) -> None:
+    """Заголовки разделов статьи (по последнему снимку) — для log/diff --section (T9)."""
+    with _library() as lib:
+        for s in lib.sections(slug):
+            typer.echo(s)
 
 
 def _clip(text: str, n: int = 160) -> str:
@@ -398,13 +427,23 @@ def _print_ops(ops: list[Op], context: int) -> None:
         typer.secho(f"    … {skipped} без изменений …", dim=True)
 
 
-def _print_diff(d: PairDiff, context: int) -> None:
+def _print_diff(d: PairDiff, context: int, section: str | None = None) -> None:
     st = d.stats
     mark, color = KIND_STYLE.get(d.kind, ("=", None))
     typer.secho(f"{d.title} ({d.slug})", bold=True)
     typer.echo(typer.style(f"{mark} {d.a.slug} → {d.b.slug} · {d.kind}", fg=color, bold=True)
                + f" · +{st.words_added:,} / −{st.words_removed:,} слов · {st.blocks_changed} блоков · "
                + f"{len(st.sections)} разделов")
+    if section is not None:
+        # T9: раздел — понятие только тела статьи, библиографию и apparatus не фильтруем ими
+        typer.secho(f"только раздел «{section}»", dim=True)
+        body = filter_section(d.body, section)
+        if not any(op.kind != "equal" for op in body):
+            typer.secho("В этом разделе правки между выбранными изданиями нет.", dim=True)
+            return
+        typer.echo()
+        _print_ops(body, context)
+        return
     if not any(op.kind != "equal" for op in d.body + d.biblio + d.apparatus):
         if d.kind == "minor":
             # текст, библиография и сами блоки apparatus не изменились — правку углядели
@@ -434,6 +473,8 @@ def diff(
     context: Annotated[
         int, typer.Option("--context", "-C", help="Сколько неизменённых абзацев показывать вокруг правки.")
     ] = 1,
+    section: Annotated[str | None, typer.Option(
+        "--section", "-s", help="Только этот раздел (T9). Список: sepdiff sections.")] = None,
 ) -> None:
     """Что изменилось в статье между двумя изданиями.
 
@@ -441,7 +482,9 @@ def diff(
     sepdiff diff kant fall2024 — ревизия fall2024 относительно предыдущего снимка.
     """
     with _library() as lib:
-        _print_diff(lib.diff(slug, a, b), context)
+        if section is not None:
+            _check_section(lib, slug, section)
+        _print_diff(lib.diff(slug, a, b), context, section)
 
 
 @app.command()

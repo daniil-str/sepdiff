@@ -1,5 +1,12 @@
 {% if hist %}
+{% if section %}
+<p class="section-filter">раздел: <b>{{ section }}</b> ·
+  <a href="/e/{{ slug }}{% if show_all %}?all=1{% endif %}"
+     hx-get="/e/{{ slug }}/history{% if show_all %}?all=1{% endif %}" hx-target="#history"
+     hx-push-url="/e/{{ slug }}{% if show_all %}?all=1{% endif %}">× сбросить (T9)</a></p>
+{% endif %}
 <form action="/e/{{ slug }}/diff" method="get" class="history">
+  {% if section %}<input type="hidden" name="section" value="{{ section }}">{% endif %}
   <div class="table-wrap">
   <table>
     <thead>
@@ -21,9 +28,18 @@
           <span class="muted">{{ r.edition.slug }}</span></td>
         <td><span class="kind {{ r.kind }}" title="{{ KIND_HINT[r.kind] }}">{{ KIND_LABEL[r.kind] }}</span></td>
         <td class="num">{{ row.stats }}{% if r.suspect %} <span class="err" title="объём текста скачет больше чем вдвое — возможна ошибка разбора">⚠</span>{% endif %}</td>
-        <td class="secs">{% for s in r.stats.sections[:3] %}<span class="chip" title="{{ s }}">{{ s }}</span>{% endfor %}{% if r.stats.sections | length > 3 %}<span class="muted"> +{{ r.stats.sections | length - 3 }}</span>{% endif %}</td>
+        <td class="secs">
+          {% if section %}<span class="chip active">{{ section }}</span>
+          {% else %}
+          {% for s in r.stats.sections[:3] %}<a class="chip" title="только этот раздел (T9)"
+            href="/e/{{ slug }}?section={{ s | urlencode }}"
+            hx-get="/e/{{ slug }}/history?section={{ s | urlencode }}" hx-target="#history"
+            hx-push-url="/e/{{ slug }}?section={{ s | urlencode }}">{{ s }}</a>{% endfor %}
+          {% if r.stats.sections | length > 3 %}<span class="muted"> +{{ r.stats.sections | length - 3 }}</span>{% endif %}
+          {% endif %}
+        </td>
         <td class="act">
-          {% if r.kind in TEXT_KINDS or (r.kind == "markup_only" and r.prev_edition) %}<a href="/e/{{ slug }}/diff?b={{ r.edition.slug }}">diff</a>
+          {% if r.kind in TEXT_KINDS or (r.kind == "markup_only" and r.prev_edition) %}<a href="/e/{{ slug }}/diff?b={{ r.edition.slug }}{% if section %}&section={{ section | urlencode }}{% endif %}">diff</a>
           {% elif r.kind == "created" %}<a href="/e/{{ slug }}/v/{{ r.edition.slug }}">текст</a>{% endif %}
         </td>
       </tr>
@@ -35,7 +51,9 @@
   <div class="actions">
     <button>Сравнить A и B</button>
     {% if show_all %}
-      <a href="/e/{{ slug }}" hx-get="/e/{{ slug }}/history" hx-target="#history" hx-push-url="/e/{{ slug }}">скрыть правки только вёрстки</a>
+      <a href="/e/{{ slug }}{% if section %}?section={{ section | urlencode }}{% endif %}"
+         hx-get="/e/{{ slug }}/history{% if section %}?section={{ section | urlencode }}{% endif %}"
+         hx-target="#history" hx-push-url="/e/{{ slug }}{% if section %}?section={{ section | urlencode }}{% endif %}">скрыть правки только вёрстки</a>
     {% elif hidden %}
       <a href="/e/{{ slug }}?all=1" hx-get="/e/{{ slug }}/history?all=1" hx-target="#history" hx-push-url="/e/{{ slug }}?all=1">показать и правки только вёрстки ({{ hidden }})</a>
     {% endif %}

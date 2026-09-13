@@ -4,6 +4,7 @@
 <h1><a href="/e/{{ slug }}" class="plain">{{ title }}</a></h1>
 <form class="pick-editions" action="/e/{{ slug }}/diff" method="get"
       hx-get="/e/{{ slug }}/diff/pane" hx-target="#pane" hx-trigger="change">
+  {% if section %}<input type="hidden" name="section" value="{{ section }}">{% endif %}
   <label>было
     <select name="a">
       {% for e in editions %}<option value="{{ e.slug }}"{% if e.slug == a %} selected{% endif %}>{{ e.label }}</option>{% endfor %}
@@ -20,7 +21,7 @@
     <label><input type="radio" name="view" value="side"{% if view == "side" %} checked{% endif %}> рядом</label>
   </span>
   <noscript><button>Сравнить</button></noscript>
-  <a href="/e/{{ slug }}" class="back">← история</a>
+  <a href="/e/{{ slug }}{% if section %}?section={{ section | urlencode }}{% endif %}" class="back">← история</a>
 </form>
 <div id="pane">{% include "_pane.html" %}</div>
 {% endblock %}

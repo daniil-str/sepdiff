@@ -95,6 +95,12 @@ class Revision:
     unchecked_before: int = 0   # нескачанные издания в том же промежутке
 
 
+def touches_section(rev: Revision, section: str) -> bool:
+    """Ревизия задела этот раздел (T9, log/history --section): created/removed —
+    родились/пропали вместе со всей статьёй, значит и с любым её разделом."""
+    return rev.kind in ("created", "removed") or section in rev.stats.sections
+
+
 @dataclass
 class LiveRevision:
     """Текущая версия статьи на сайте относительно последнего скачанного издания."""
@@ -388,6 +394,19 @@ class Library:
         if live is not None and live["http_status"] == 200:
             out.append(Edition.parse(LIVE))
         return out
+
+    def sections(self, slug: str) -> list[str]:
+        """Заголовки последнего скачанного снимка статьи, по порядку (T9, diff/log --section)."""
+        check_slug(slug)
+        snaps = [s for s in self._snaps(slug) if s.http_status == 200]
+        if not snaps:
+            raise SepDiffError(f"у статьи {slug!r} нет скачанных снимков — сначала: sepdiff fetch {slug}")
+        doc = self._doc(snaps[-1].blob_sha)  # type: ignore[arg-type]
+        seen: list[str] = []
+        for b in doc.body:
+            if b.kind == "heading" and b.text not in seen:
+                seen.append(b.text)
+        return seen
 
     # ------------------------------------------------------------------
     # Сканирование
