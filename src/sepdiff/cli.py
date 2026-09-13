@@ -33,6 +33,7 @@ KIND_STYLE: dict[str, tuple[str, str | None]] = {
     "markup_only": ("·", None),
     "created": ("◇", "green"),
     "removed": ("✕", "red"),
+    "retired": ("→", "blue"),
 }
 SECONDS_PER_REQUEST = 6   # 5 с паузы robots.txt + сам запрос
 
@@ -165,13 +166,22 @@ def _print_live(slug: str, live: LiveRevision | None) -> None:
         typer.secho(f"  текущая версия на сайте совпадает с {base} (проверено {checked})", dim=True)
         return
     mark, color = KIND_STYLE.get(live.kind, ("◆", None))
+    if live.kind == "retired":
+        # T5: не правка — SEP снял статью с сопровождения, страница живая (200), но
+        # это служебное уведомление, а не текст; сравнивать не с чем
+        successor = (f"преемница: {live.successor} (sepdiff log {live.successor})"
+                    if live.successor else "без замены — просто снята в архив")
+        typer.echo(typer.style(f"{mark} {'live':9s}", fg=color, bold=True)
+                   + typer.style(f" статья снята с сопровождения SEP (проверено {checked})  ", dim=True)
+                   + successor)
+        return
     after = f" после {live.base.slug}" if live.base else ""
     typer.echo(typer.style(f"{mark} {'live':9s}", fg=color, bold=True)
                + typer.style(f" на сайте, ещё не в архиве{after} (проверено {checked})  ", dim=True)
                + typer.style(f"{live.kind:12s}", fg=color)
                + f" {_stats_line(live.kind, live.stats)}"
                + (typer.style(f"   sepdiff diff {slug} live", dim=True)
-                  if live.base and live.kind != "removed" else ""))
+                  if live.base and live.kind not in ("removed", "retired") else ""))
 
 
 @app.command()
@@ -191,10 +201,13 @@ def live(
         "not_modified": "Страница на сайте не менялась с прошлой проверки.",
         "same": "Страница на сайте та же.",
         "updated": "Скачана текущая версия со сайта.",
+        "retired": "Статья снята с сопровождения SEP (T5) — вместо текста служебная страница.",
         "gone": "На сайте статьи нет (404).",
     }
     with _library() as lib:
         typer.secho(outcomes[lib.refresh_live(slug, force)], dim=True)
+        for pred_slug, pred_title in lib.predecessors(slug):
+            typer.secho(f"  ← преемница снятой статьи {pred_slug} ({pred_title or pred_slug})", fg="blue")
         current = lib.live_revision(slug)
         if current is None:
             typer.echo(f"Сравнить не с чем — сначала история: sepdiff fetch {slug}")
@@ -287,9 +300,11 @@ def _gap_lines(unchanged: int, unchecked: int) -> None:
         typer.secho(f"  ┆ {text}", fg="yellow" if unchecked_line else None, dim=True)
 
 
-def _print_log(hist: History, show_all: bool) -> None:
+def _print_log(hist: History, show_all: bool, predecessors: list[tuple[str, str | None]] | None = None) -> None:
     typer.secho(f"{hist.title or hist.slug} ({hist.slug})", bold=True)
     typer.secho(f"снимков: {hist.snapshots} из {hist.editions} изданий", dim=True)
+    for slug, title in predecessors or []:   # T5: сюда переехала снятая SEP статья
+        typer.secho(f"  ← преемница снятой статьи {slug} ({title or slug}): sepdiff log {slug}", fg="blue")
     _print_live(hist.slug, hist.live)
     _gap_lines(hist.unchanged_after, hist.unchecked_after)
     hidden = 0
@@ -323,7 +338,7 @@ def log(
 ) -> None:
     """История ревизий статьи, новые сверху."""
     with _library() as lib:
-        _print_log(lib.history(slug), show_all)
+        _print_log(lib.history(slug), show_all, lib.predecessors(slug))
 
 
 def _clip(text: str, n: int = 160) -> str:

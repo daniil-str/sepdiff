@@ -13,9 +13,23 @@
   {% endif %}
 </div>
 
+{% if predecessors %}
+<p class="muted">
+  ← преемница {% if predecessors|length > 1 %}снятых SEP статей{% else %}снятой SEP статьи{% endif %}
+  {% for p, t in predecessors %}<a href="/e/{{ p }}">{{ t or p }}</a>{% if not loop.last %}, {% endif %}{% endfor %}
+</p>
+{% endif %}
+
 {% if hist and hist.live %}{% set lv = hist.live %}
   {% if lv.stale %}
   <p class="muted">Сохранённая копия сайта старше последнего издания — проверьте её заново.</p>
+  {% elif lv.kind == "retired" %}
+  <div class="live-banner">
+    <span class="kind retired" title="{{ KIND_HINT['retired'] }}">{{ KIND_LABEL['retired'] }}</span>
+    SEP снял статью с сопровождения{% if lv.base %} (в архиве осталась по {{ lv.base.label }}){% endif %}:
+    {% if lv.successor %}сменилась статьёй <a href="/e/{{ lv.successor }}">{{ lv.successor }}</a>{% else %}без замены{% endif %}.
+    <span class="muted">проверено {{ lv.checked_at[:10] }}</span>
+  </div>
   {% elif lv.kind in TEXT_KINDS or lv.kind == "removed" %}
   <div class="live-banner">
     <span class="kind {{ lv.kind }}" title="{{ KIND_HINT[lv.kind] }}">{{ KIND_LABEL[lv.kind] }}</span>

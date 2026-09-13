@@ -1,7 +1,7 @@
 import pytest
 from fakes import KANT, FakeFetcher, site
 from fastapi.testclient import TestClient
-from pages import LIVE_PENDING, page
+from pages import LIVE_PENDING, page, retired
 
 from sepdiff.web.app import create_app
 
@@ -122,6 +122,21 @@ def test_live_banner(tmp_path):
         r = client.get("/e/kant/diff", params={"a": "sum2021", "b": "live"})
         assert "Текущая версия (сайт)" in r.text and "существенная" in r.text
         assert "plato.stanford.edu/entries/kant/" in client.get("/e/kant/v/live").text
+
+
+def test_retired_entry_banner_and_cross_reference(tmp_path):
+    # T5: страница снятой статьи и обратная ссылка с её преемницы.
+    pages = site({"kant": KANT})
+    pages["/entries/kant/"] = retired(successor="new-entry", last_edition="sum2021")
+    app = create_app(tmp_path, fetcher_factory=lambda: FakeFetcher(pages), start_worker=False)  # type: ignore[arg-type, return-value]
+    with TestClient(app) as client:
+        client.post("/e/kant/scan", headers=HX)
+        assert app.state.worker.run_once()
+        text = client.get("/e/kant").text
+        assert "снята" in text and 'href="/e/new-entry"' in text
+
+        text2 = client.get("/e/new-entry").text
+        assert 'href="/e/kant"' in text2 and "снятой SEP статьи" in text2
 
 
 def test_errors_and_csrf(web):

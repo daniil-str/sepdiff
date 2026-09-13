@@ -3,6 +3,7 @@
   --accent: #8c1515;                     /* стэнфордский cardinal */
   --ins: #d7f5dd; --insfg: #0b5d1e; --del: #ffdcd8; --delfg: #8e1b10; --chip: #eeece6;
   --sub: #b7791f; --minor: #2b6cb0; --changed: #805ad5; --created: #2f855a; --removed: #c53030;
+  --retired: #2c7a7b;
   --serif: Georgia, "Times New Roman", serif;
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
@@ -12,6 +13,7 @@
     --accent: #e57373;
     --ins: #123b1e; --insfg: #9be3ad; --del: #4a1814; --delfg: #ffb4a8; --chip: #26262a;
     --sub: #f6c35b; --minor: #7fb3f0; --changed: #b794f4; --created: #68d391; --removed: #fc8181;
+    --retired: #4fd1c5;
   }
 }
 * { box-sizing: border-box; }
@@ -79,6 +81,7 @@ tr.markup_only { color: var(--mute); }
 .mark.changed, .kind.changed { color: var(--changed); }
 .mark.created, .kind.created { color: var(--created); }
 .mark.removed, .kind.removed { color: var(--removed); }
+.mark.retired, .kind.retired { color: var(--retired); }
 .kind { font-weight: 600; font-size: .85rem; white-space: nowrap; }
 tr.substantive .ed { font-weight: 600; }
 td.secs .chip { max-width: 16rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

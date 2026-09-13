@@ -6,7 +6,7 @@ from .diffing import PairStats
 
 KIND_MARK = {
     "substantive": "●", "minor": "○", "changed": "◐",
-    "markup_only": "·", "created": "◇", "removed": "✕",
+    "markup_only": "·", "created": "◇", "removed": "✕", "retired": "→",
 }
 KIND_LABEL = {
     "substantive": "существенная",
@@ -15,6 +15,7 @@ KIND_LABEL = {
     "markup_only": "только вёрстка",
     "created": "первая версия",
     "removed": "удалена",
+    "retired": "снята",
 }
 # Пояснения — всплывающие подсказки в вебе.
 KIND_HINT = {
@@ -24,6 +25,7 @@ KIND_HINT = {
     "markup_only": "поменялась только вёрстка сайта, текст статьи тот же",
     "created": "первое издание со статьёй",
     "removed": "статья пропала из издания",
+    "retired": "SEP снял статью с сопровождения (страница жива, 200, но текста больше нет)",
 }
 TEXT_KINDS = {"substantive", "minor", "changed"}   # ревизии, где есть что показать в diff
 
@@ -53,7 +55,7 @@ def gap_texts(unchanged: int, unchecked: int) -> list[str]:
 def stats_line(kind: str, st: PairStats) -> str:
     if kind == "created":
         return f"{st.words_added:,} слов"
-    if kind in ("markup_only", "removed"):
+    if kind in ("markup_only", "removed", "retired"):
         return ""
     changed = st.words_added or st.words_removed or st.blocks_changed
     parts = [f"+{st.words_added:,} / −{st.words_removed:,}" if changed else "текст тот же"]

@@ -189,6 +189,7 @@ def create_app(
             "job": job, "position": jobs.position(lib.conn, job) if job else 0,
             "watched": lib.is_watched(slug),
             "last_job": jobs.latest(lib.conn, jobs.SCAN, slug),
+            "predecessors": lib.predecessors(slug),
         }
 
     @app.get("/e/{slug}", response_class=HTMLResponse)

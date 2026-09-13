@@ -20,7 +20,7 @@ from . import config, db
 from .blobs import BlobStore
 from .diffing import Op, PairStats, block_diff, classify, pair_stats
 from .editions import LIVE, Edition, parse_index
-from .extract import EXTRACT_VERSION, Block, Doc, extract
+from .extract import EXTRACT_VERSION, Block, Doc, Retirement, extract, parse_retirement
 from .fetcher import Fetcher, FetchError
 from .normalize import normalize, sha
 
@@ -99,13 +99,15 @@ class Revision:
 class LiveRevision:
     """Текущая версия статьи на сайте относительно последнего скачанного издания."""
     base: Edition | None       # с чем сравниваем; None — архивных снимков нет
-    kind: str                  # как у classify; removed — на сайте статьи нет (404)
+    kind: str                  # как у classify; removed — на сайте статьи нет (404);
+                               # retired — статья снята, но не удалена (T5, ниже)
     stats: PairStats
     revision_date: str | None
     checked_at: str            # когда последний раз спрашивали сайт
     # сохранённая копия сайта старше последнего скачанного издания: сравнивать
     # их бессмысленно (покажет «правку назад»), нужно спросить сайт заново
     stale: bool = False
+    successor: str | None = None   # T5: slug статьи-преемницы, только у kind == "retired"
 
 
 @dataclass
@@ -370,7 +372,7 @@ class Library:
                           if c.slug == slug and c.edition.slug in missing]
             before = self.live_revision(slug)
             # после нового издания сохранённая копия сайта устарела — спрашиваем заново
-            if self.refresh_live(slug, force=new_edition) in ("updated", "gone"):
+            if self.refresh_live(slug, force=new_edition) in ("updated", "gone", "retired"):
                 after = self.live_revision(slug)
                 if after is not None and after.kind not in ("identical", "markup_only") and (
                         before is None or (before.kind, before.stats) != (after.kind, after.stats)):
@@ -781,7 +783,8 @@ class Library:
 
         Условный запрос (If-None-Match / If-Modified-Since): если страница не
         менялась, сайт отвечает 304 без тела. Возвращает, что произошло:
-        cached (спрашивали меньше суток назад) | not_modified | same | updated | gone.
+        cached (спрашивали меньше суток назад) | not_modified | same | updated |
+        retired (переименована/снята, T5 — см. parse_retirement) | gone.
         """
         check_slug(slug)
         self._ensure_entry(slug)
@@ -809,10 +812,18 @@ class Library:
         outcome = "gone"
         if r.status == 200:
             blob = self.blobs.put(r.content)
-            outcome = "same" if row is not None and row["blob_sha"] == blob else "updated"
-            doc = extract(r.content)
-            self._docs[blob] = doc
-            values |= {"blob_sha": blob, **_doc_fields(doc)}
+            retirement: Retirement | None = parse_retirement(r.content)
+            if retirement is not None:
+                # снята/переименована (T5) — это служебная страница, не текст статьи:
+                # extract()/classify() тут ни при чём, сравнивать с прошлым снимком нечего
+                outcome = "retired"
+                values |= {"blob_sha": blob, "retired_successor": retirement.successor,
+                          "retired_last_edition": retirement.last_edition}
+            else:
+                outcome = "same" if row is not None and row["blob_sha"] == blob else "updated"
+                doc = extract(r.content)
+                self._docs[blob] = doc
+                values |= {"blob_sha": blob, **_doc_fields(doc)}
         cols = ", ".join(values)
         with self.conn:
             self.conn.execute(f"INSERT OR REPLACE INTO live ({cols}) VALUES ({', '.join('?' * len(values))})",
@@ -826,6 +837,11 @@ class Library:
             return None
         base = self._last_archived(slug)
         base_ed = Edition.parse(base.edition_slug) if base else None
+        if row["retired_successor"] is not None or row["retired_last_edition"] is not None:
+            # T5: снята/переименована — не "removed" (страница жива, 200), но и не текст
+            # статьи; сравнивать не с чем, дальше только перекрёстная ссылка на преемницу
+            return LiveRevision(base_ed, "retired", PairStats(), None, row["checked_at"],
+                                successor=row["retired_successor"])
         if row["http_status"] != 200:
             return LiveRevision(base_ed, "removed", PairStats(), None, row["checked_at"]) if base else None
         live_doc = self._doc(row["blob_sha"])
@@ -840,6 +856,13 @@ class Library:
             stats = pair_stats(block_diff(base_doc.body, live_doc.body), block_diff(base_doc.biblio, live_doc.biblio),
                                block_diff(base_doc.apparatus, live_doc.apparatus))
         return LiveRevision(base_ed, kind, stats, live_doc.revision_date, row["checked_at"], stale)
+
+    def predecessors(self, slug: str) -> list[tuple[str, str | None]]:
+        """Статьи, снятые в пользу этой (T5): обратный поиск по retired_successor. (slug, title)."""
+        rows = self.conn.execute(
+            "SELECT l.entry_slug, e.title FROM live l LEFT JOIN entries e ON e.slug = l.entry_slug "
+            "WHERE l.retired_successor = ? ORDER BY l.entry_slug", (slug,)).fetchall()
+        return [(r["entry_slug"], r["title"]) for r in rows]
 
     # ------------------------------------------------------------------
     # Diff и просмотр

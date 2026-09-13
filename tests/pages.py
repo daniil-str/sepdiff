@@ -106,3 +106,35 @@ BOX_JUN6 = "last substantive content change<table><tr><td>JUN<br>6<br>2003</td><
 
 def old(box: str = "", foot: str = "", vary: str = "vary") -> bytes:
     return OLD.format(box=box, foot=foot, vary=vary).encode("utf-8")
+
+
+# «Document Retired» — служебная страница вместо статьи, T5 (docs/journal.md §22).
+# Настоящая вёрстка SEP: <div id="content"><h1>Document Retired</h1><div class="notice">...
+RETIRED = """<html><body><div id="content">
+<h1>Document Retired</h1>
+<div class="notice">
+<p><b>The entry titled &ldquo;Old Entry&rdquo; is no longer being maintained
+and has been retired. It has been superceded by a new entry under the title
+&ldquo;New Entry&rdquo;, which appears at the URL:</b></p>
+<blockquote><a href="../{successor}/">https://plato.stanford.edu/entries/{successor}/</a></blockquote>
+<p>The last archived version of the retired entry can be found here:
+<a href="../../archives/{last_edition}/entries/old-entry/">Old Entry ({last_edition})</a>.</p>
+</div></div></body></html>"""
+
+# Снята без замены — прямо в архив, без ссылки на статью-преемницу.
+RETIRED_NO_SUCCESSOR = """<html><body><div id="content">
+<h1>Document Retired</h1>
+<div class="notice">
+<p><b>The entry titled &ldquo;Old Entry&rdquo; has been retired to the
+<a href="../archives/">SEP Archives</a>.</b></p>
+<p>The final archived version of the retired entry can be found here:
+<a href="../../archives/{last_edition}/entries/old-entry/">Old Entry ({last_edition})</a>.</p>
+</div></div></body></html>"""
+
+
+def retired(successor: str = "new-entry", last_edition: str = "sum2018") -> bytes:
+    return RETIRED.format(successor=successor, last_edition=last_edition).encode("utf-8")
+
+
+def retired_no_successor(last_edition: str = "sum2018") -> bytes:
+    return RETIRED_NO_SUCCESSOR.format(last_edition=last_edition).encode("utf-8")
