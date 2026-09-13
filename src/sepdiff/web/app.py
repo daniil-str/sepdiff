@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .. import config, jobs
+from ..editions import Edition
 from ..fetcher import Fetcher
 from ..present import KIND_HINT, KIND_LABEL, KIND_MARK, TEXT_KINDS, eta_text, gap_texts, stats_line
 from ..service import SLUG_RE, History, Library, PairDiff, SepDiffError, check_slug
@@ -287,6 +288,11 @@ def create_app(
     def version(request: Request, slug: str, edition: str, lib: Lib) -> HTMLResponse:
         doc = lib.show(slug, edition)
         return page(request, "version.html", slug=slug, edition=edition, doc=doc)
+
+    @app.get("/e/{slug}/blame", response_class=HTMLResponse)
+    def blame(request: Request, slug: str, lib: Lib) -> HTMLResponse:
+        lines = [(blk, Edition.parse(ed)) for blk, ed in lib.blame(slug)]
+        return page(request, "blame.html", slug=slug, title=lib.entry_title(slug) or slug, lines=lines)
 
     return app
 

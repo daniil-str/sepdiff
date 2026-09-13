@@ -126,6 +126,40 @@ def test_diff(lib):
     assert lib.show("kant", "spr2021").title == "Immanuel Kant"
 
 
+def test_blame(lib):
+    # T4: у каждого абзаца последней версии — издание его последней правки.
+    lib.scan("kant")
+    by_text = {blk.text: ed for blk, ed in lib.blame("kant")}
+
+    assert by_text["Immanuel Kant (1724-1804) is the central figure in modern philosophy."] == "spr2020"
+    assert by_text["1. Life and works"] == "spr2020"                       # заголовок не менялся
+    assert by_text["Kant was born in Königsberg and spent there all his life."] == "win2020"  # lived -> spent
+    assert by_text["Kant never travelled more than a hundred miles from home."] == "spr2021"   # добавлен
+    assert not any("will be removed later" in t for t in by_text)          # удалённый абзац не попал в blame
+
+
+def test_blame_is_cached(lib, monkeypatch):
+    lib.scan("kant")
+    first = lib.blame("kant")
+
+    calls: list[str] = []
+    orig_show = Library.show
+
+    def counting_show(self: Library, slug: str, edition: str):
+        calls.append(edition)
+        return orig_show(self, slug, edition)
+
+    monkeypatch.setattr(Library, "show", counting_show)
+    second = lib.blame("kant")                          # из blame_cache, документы не перечитаны
+    assert calls == []
+    assert [(b.text, ed) for b, ed in second] == [(b.text, ed) for b, ed in first]
+
+    lib.rebuild("kant")                                  # цепочка ревизий та же -> кеш всё ещё годится
+    third = lib.blame("kant")
+    assert calls == []
+    assert [(b.text, ed) for b, ed in third] == [(b.text, ed) for b, ed in first]
+
+
 def test_unknown_entry(lib):
     with pytest.raises(SepDiffError, match="нет ни в одном"):
         lib.scan("no-such-entry")

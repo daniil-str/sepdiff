@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 SCHEMA = """
 -- квартальные издания SEP, по порядку выхода
@@ -128,6 +128,18 @@ MIGRATIONS = {
         PRIMARY KEY (entry_slug, edition_slug, path)
     );
     ALTER TABLE snapshots ADD COLUMN supplements_sha TEXT;
+    """,
+    # кеш Library.blame (T4, docs/journal.md §21): проход по всей цепочке ревизий
+    # статьи (~45 у frege) занимал секунды — дороже одного diff. fingerprint —
+    # дешёвый отпечаток цепочки (edition:kind), без чтения самих документов;
+    # rebuild меняет ревизии -> отпечаток расходится -> кеш пересчитывается сам.
+    7: """
+    CREATE TABLE blame_cache (
+        entry_slug   TEXT PRIMARY KEY REFERENCES entries(slug),
+        fingerprint  TEXT NOT NULL,
+        computed_at  TEXT NOT NULL,
+        data         TEXT NOT NULL   -- JSON: [[kind, section, text, edition_slug], ...]
+    );
     """,
 }
 

@@ -122,3 +122,17 @@ details.diff-extra summary { cursor: pointer; font-weight: 600; }
 
 .version { font: 17px/1.65 var(--serif); }
 .version h3 { font-family: var(--sans); font-size: 1rem; margin-top: 2rem; }
+
+/* T4: blame — гуттер с изданием слева от каждого абзаца, как git blame. */
+.blame { font: 17px/1.65 var(--serif); }
+.blame-line { display: grid; grid-template-columns: 6rem 1fr; gap: .8rem; align-items: baseline; }
+.blame-line.heading { margin-top: 1.4rem; }
+.blame-src { font: .78rem var(--sans); color: var(--mute); white-space: nowrap; text-align: right;
+            text-decoration: none; }
+.blame-src:hover { color: var(--fg); }
+.blame-line h3 { font-family: var(--sans); font-size: 1rem; margin: 0; }
+.blame-line p { margin: 0 0 .8rem; }
+@media (max-width: 600px) {
+  .blame-line { grid-template-columns: 1fr; gap: .1rem; }
+  .blame-src { text-align: left; }
+}

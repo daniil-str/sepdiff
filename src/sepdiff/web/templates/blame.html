@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}: blame — SEPDiff{% endblock %}
+{% block main %}
+<h1><a href="/e/{{ slug }}" class="plain">{{ title }}</a></h1>
+<div class="meta">
+  у каждого абзаца — издание, в котором он в последний раз менялся
+  · <a href="/e/{{ slug }}/diff">diff последней правки</a>
+  · <a href="/e/{{ slug }}" class="back">← история</a>
+</div>
+<article class="blame">
+  {% for blk, ed in lines %}
+    <div class="blame-line{% if blk.kind == 'heading' %} heading{% endif %}">
+      <a class="blame-src" href="/e/{{ slug }}/diff?b={{ ed.slug }}" title="{{ ed.label }}: изменение, где появился этот текст">{{ ed.label }}</a>
+      {% if blk.kind == "heading" %}<h3>{{ blk.text }}</h3>{% else %}<p>{{ blk.text }}</p>{% endif %}
+    </div>
+  {% endfor %}
+</article>
+{% endblock %}

@@ -20,7 +20,7 @@ from . import config, db
 from .blobs import BlobStore
 from .diffing import Op, PairStats, block_diff, classify, pair_stats
 from .editions import LIVE, Edition, parse_index
-from .extract import EXTRACT_VERSION, Doc, extract
+from .extract import EXTRACT_VERSION, Block, Doc, extract
 from .fetcher import Fetcher, FetchError
 from .normalize import normalize, sha
 
@@ -892,3 +892,58 @@ class Library:
     def show(self, slug: str, edition: str) -> Doc:
         check_slug(slug)
         return self._doc(self._snapshot(slug, edition).blob_sha)  # type: ignore[arg-type]
+
+    def _blame_fingerprint(self, hist: History) -> str:
+        # Дешёвая проверка «ревизии те же, что в прошлый раз»: без чтения документов,
+        # только то, что уже есть в hist. Расходится — rebuild что-то поменял.
+        return sha("|".join(f"{r.edition.slug}:{r.kind}" for r in hist.revisions))
+
+    def blame(self, slug: str) -> list[tuple[Block, str]]:
+        """Абзац последней версии -> издание, где он в последний раз менялся (T4, PLAN.md).
+
+        Проходит по всей цепочке ревизий, выравнивая тексты тем же block_diff, что
+        diff/log: «равный» блок наследует источник предыдущего выравнивания,
+        «изменённый» или «добавленный» получает текущее издание. Тот же принцип,
+        что у `git blame` экспортированного репозитория (export.py), без самого git.
+
+        На статье со всей историей (frege, 45 ревизий) проход занимал секунды —
+        результат кешируется в blame_cache по fingerprint цепочки ревизий.
+        """
+        check_slug(slug)
+        hist = self.history(slug)
+        fp = self._blame_fingerprint(hist)
+        cached = self.conn.execute("SELECT data FROM blame_cache WHERE entry_slug = ? AND fingerprint = ?",
+                                   (slug, fp)).fetchone()
+        if cached is not None:
+            return [(Block(k, section, text), ed) for k, section, text, ed in json.loads(cached["data"])]
+
+        blocks: list[Block] = []
+        origins: list[str] = []
+        for rev in hist.revisions:
+            if rev.kind == "removed":
+                blocks, origins = [], []
+                continue
+            doc = self.show(slug, rev.edition.slug)
+            if not blocks:
+                blocks, origins = list(doc.body), [rev.edition.slug] * len(doc.body)
+                continue
+            origin_of = {id(blk): og for blk, og in zip(blocks, origins, strict=True)}
+            new_blocks: list[Block] = []
+            new_origins: list[str] = []
+            for op in block_diff(blocks, doc.body):
+                if op.kind == "del":
+                    continue
+                new_blocks.append(op.b)  # type: ignore[arg-type]
+                new_origins.append(origin_of[id(op.a)] if op.kind == "equal" else rev.edition.slug)
+            blocks, origins = new_blocks, new_origins
+        if not blocks:
+            raise SepDiffError(f"у статьи {slug} сейчас нет текста — удалена или ни разу не скачивалась")
+        result = list(zip(blocks, origins, strict=True))
+        data = json.dumps([[b.kind, b.section, b.text, ed] for b, ed in result], ensure_ascii=False)
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO blame_cache (entry_slug, fingerprint, computed_at, data) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(entry_slug) DO UPDATE SET "
+                "fingerprint = excluded.fingerprint, computed_at = excluded.computed_at, data = excluded.data",
+                (slug, fp, _now(), data))
+        return result
