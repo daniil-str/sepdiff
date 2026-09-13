@@ -69,6 +69,43 @@ uv run sepdiff serve                 # http://localhost:8000/
 `http://localhost:8000/feed.atom` и в `sepdiff feed`. Без сервера то же
 делает `sepdiff watch --check`, например по расписанию раз в сутки.
 
+### Обход по расписанию без сервера
+
+`sepdiff watch --check` — обычный процесс, который завершается: без `serve`
+его нужно повесить на планировщик самому. Вывод рассчитан на лог-файл — без
+цвета, когда он не в терминал (это поведение click/typer, отдельно включать
+не нужно).
+
+**cron** (Linux/macOS), раз в сутки в 9:00:
+
+```cron
+0 9 * * * cd /path/to/sepdiff && HTTPS_PROXY=http://127.0.0.1:2080 SEPDIFF_DATA=/path/to/data \
+    uv run sepdiff watch --check >> /path/to/sepdiff/watch.log 2>&1
+```
+
+**Планировщик заданий Windows** (`schtasks`) команду с `&&` через `/tr`
+не принимает — проще завести файл-обёртку `watch.bat` рядом с проектом:
+
+```bat
+@echo off
+cd /d C:\path\to\sepdiff
+set HTTPS_PROXY=http://127.0.0.1:2080
+uv run sepdiff watch --check >> watch.log 2>&1
+```
+
+и указать на него:
+
+```bat
+schtasks /create /tn "SEPDiff watch" /sc daily /st 09:00 /tr "C:\path\to\sepdiff\watch.bat"
+```
+
+Проверить, что задание отработает как надо, не дожидаясь расписания:
+`schtasks /run /tn "SEPDiff watch"` (Windows) или сама команда из `cron`-строки
+вручную. `$SEPDIFF_DATA`, прокси и контакт для User-Agent — как и при обычном
+запуске (см. выше); без прокси с этой сети `plato.stanford.edu` недоступен
+вовсе — команда без него просто провалится по таймауту, а не пойдёт в сеть
+в обход прокси.
+
 `fetch` соблюдает `robots.txt` SEP: не больше одного запроса в 5 секунд (в том
 числе между запусками), никаких `/cgi-bin/` и `/search/`. Скачанное не
 перекачивается никогда; прерванный `fetch` продолжает с того же места.
