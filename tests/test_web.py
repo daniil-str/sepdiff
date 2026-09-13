@@ -110,6 +110,29 @@ def test_diff_side_by_side_view(web):
     assert 'class="diff">' in r.text
 
 
+def test_section_filter_on_history_and_diff(web):
+    # T9: diff/log по разделам — история и diff, отфильтрованные по разделу.
+    client, worker = web
+    client.post("/e/kant/scan", headers=HX)
+    assert worker.run_once()
+
+    r = client.get("/e/kant", params={"section": "1. Life and works"})
+    assert r.status_code == 200
+    assert "win2020" in r.text and "spr2021" in r.text
+    assert "sum2020" not in r.text                          # markup_only не задел ни один раздел
+    assert "× сбросить" in r.text
+
+    assert client.get("/e/kant", params={"section": "nope"}).status_code == 404
+
+    r = client.get("/e/kant/diff", params={"a": "spr2020", "b": "spr2021", "section": "2. Kant's project"})
+    assert r.status_code == 200
+    assert "только раздел" in r.text and "will be removed later" in r.text
+    assert 'class="chip active"' in r.text
+
+    r = client.get("/e/kant/diff", params={"a": "spr2020", "b": "spr2021", "section": "nope"})
+    assert r.status_code == 200 and 'class="err"' in r.text
+
+
 def test_live_banner(tmp_path):
     pages = site({"kant": KANT})
     pages["/entries/kant/"] = page(**LIVE_PENDING)

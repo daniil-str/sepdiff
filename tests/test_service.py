@@ -4,9 +4,9 @@ from pages import FOOTER_NOV1, LIVE_PENDING, MINOR, SUBSTANTIVE, old, page, reti
 from typer.testing import CliRunner
 
 from sepdiff.cli import app
-from sepdiff.diffing import PairStats
+from sepdiff.diffing import PairStats, filter_section
 from sepdiff.fetcher import Response
-from sepdiff.service import Library, SepDiffError
+from sepdiff.service import Library, SepDiffError, touches_section
 
 
 @pytest.fixture
@@ -173,6 +173,28 @@ def test_diff(lib):
     assert lib.show("kant", "spr2021").title == "Immanuel Kant"
 
 
+def test_sections_and_filtering(lib):
+    # T9: diff/log по разделам — раздел прослеживается по заголовку через издания.
+    lib.scan("kant")
+    assert lib.sections("kant") == ["1. Life and works", "2. Kant's project"]
+
+    hist = lib.history("kant")
+    life = [r.edition.slug for r in hist.revisions if touches_section(r, "1. Life and works")]
+    assert life == ["spr2020", "win2020", "spr2021"]          # win2020: lived -> spent; spr2021: новый абзац
+    project = [r.edition.slug for r in hist.revisions if touches_section(r, "2. Kant's project")]
+    assert project == ["spr2020", "spr2021"]                   # spr2021: удалён "will be removed later"
+
+    d = lib.diff("kant", "spr2020", "spr2021")
+    only_life = filter_section(d.body, "1. Life and works")
+    assert only_life and all(op.section == "1. Life and works" for op in only_life)
+    assert any(op.kind != "equal" for op in only_life)
+    only_project = filter_section(d.body, "2. Kant's project")
+    assert any(op.kind != "equal" for op in only_project)
+
+    with pytest.raises(SepDiffError):
+        lib.sections("no-such-entry")
+
+
 def test_blame(lib):
     # T4: у каждого абзаца последней версии — издание его последней правки.
     lib.scan("kant")
@@ -283,6 +305,31 @@ def test_cli_log_and_diff(lib, monkeypatch):
     assert out.exit_code == 0, out.output
     assert "[-lived-]" in out.output and "{+spent+}" in out.output
     out = runner.invoke(app, ["diff", "kant", "fall2019", "win2020"])
+    assert out.exit_code == 1 and "Ошибка" in out.output
+
+
+def test_cli_sections_log_and_diff_filters(lib, monkeypatch):
+    lib.scan("kant")
+    monkeypatch.setenv("SEPDIFF_DATA", str(lib.root))
+    runner = CliRunner()
+
+    out = runner.invoke(app, ["sections", "kant"])
+    assert out.exit_code == 0, out.output
+    assert out.output.splitlines() == ["1. Life and works", "2. Kant's project"]
+
+    out = runner.invoke(app, ["log", "kant", "--section", "1. Life and works"])
+    assert out.exit_code == 0, out.output
+    assert "win2020" in out.output and "spr2021" in out.output
+    assert "не задел" in out.output   # sum2020 (markup_only) и sum2021 отфильтрованы
+
+    out = runner.invoke(app, ["diff", "kant", "spr2020", "spr2021", "--section", "2. Kant's project"])
+    assert out.exit_code == 0, out.output
+    assert "только раздел" in out.output and "will be removed later" in out.output   # del в этом разделе
+
+    out = runner.invoke(app, ["log", "kant", "--section", "nope"])
+    assert out.exit_code == 1 and "Ошибка" in out.output and "нет раздела" in out.output
+
+    out = runner.invoke(app, ["diff", "kant", "spr2020", "spr2021", "--section", "nope"])
     assert out.exit_code == 1 and "Ошибка" in out.output
 
 

@@ -21,10 +21,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .. import config, jobs
+from ..diffing import filter_section
 from ..editions import Edition
 from ..fetcher import Fetcher
 from ..present import KIND_HINT, KIND_LABEL, KIND_MARK, TEXT_KINDS, eta_text, gap_texts, stats_line
-from ..service import SLUG_RE, History, Library, PairDiff, SepDiffError, check_slug
+from ..service import SLUG_RE, History, Library, PairDiff, SepDiffError, check_slug, touches_section
 from .feed import atom, rfc3339
 from .render import changed, ops_html, ops_html_side
 
@@ -45,8 +46,18 @@ def lib_dep(request: Request) -> Iterator[Library]:
 Lib = Annotated[Library, Depends(lib_dep)]
 
 
-def history_rows(hist: History, show_all: bool) -> tuple[list[dict[str, object]], int]:
-    """Строки таблицы истории, новые сверху; markup_only сворачиваются в «без изменений»."""
+def history_rows(
+    hist: History, show_all: bool, section: str | None = None,
+) -> tuple[list[dict[str, object]], int]:
+    """Строки таблицы истории, новые сверху; markup_only сворачиваются в «без изменений».
+
+    section (T9) — только ревизии, задевшие этот раздел; «дыры» тогда не о чем
+    показывать (они про весь снимок целиком, не про раздел), так что скрыты.
+    """
+    if section is not None:
+        rows = [{"gap": False, "rev": r, "stats": stats_line(r.kind, r.stats)}
+                for r in reversed(hist.revisions) if touches_section(r, section)]
+        return rows, 0
     items: list[dict[str, object]] = []
 
     def gap(unchanged: int, unchecked: int) -> None:
@@ -175,17 +186,23 @@ def create_app(
     # Статья: история и сканирование
     # ------------------------------------------------------------------
 
-    def entry_ctx(lib: Library, slug: str, show_all: bool) -> dict[str, object]:
+    def entry_ctx(lib: Library, slug: str, show_all: bool, section: str | None = None) -> dict[str, object]:
         check_slug(slug)
+        section = section or None
         try:
             hist: History | None = lib.history(slug)
         except SepDiffError:
             hist = None   # ещё не сканировали
-        rows, hidden = history_rows(hist, show_all) if hist else ([], 0)
+        known_sections = lib.sections(slug) if hist else []
+        if section is not None and section not in known_sections:
+            raise SepDiffError(f"нет раздела {section!r}. Разделы статьи ({slug}): "
+                               + (", ".join(known_sections) or "—"))
+        rows, hidden = history_rows(hist, show_all, section) if hist else ([], 0)
         job = jobs.active(lib.conn, jobs.SCAN, slug)
         return {
             "slug": slug, "title": (hist.title if hist else None) or lib.entry_title(slug),
             "hist": hist, "rows": rows, "hidden": hidden, "show_all": show_all,
+            "section": section, "sections": known_sections,
             "job": job, "position": jobs.position(lib.conn, job) if job else 0,
             "watched": lib.is_watched(slug),
             "last_job": jobs.latest(lib.conn, jobs.SCAN, slug),
@@ -193,12 +210,14 @@ def create_app(
         }
 
     @app.get("/e/{slug}", response_class=HTMLResponse)
-    def entry(request: Request, slug: str, lib: Lib, all: bool = False) -> HTMLResponse:  # noqa: A002
-        return page(request, "entry.html", **entry_ctx(lib, slug, all))
+    def entry(request: Request, slug: str, lib: Lib, all: bool = False,  # noqa: A002
+              section: str | None = None) -> HTMLResponse:
+        return page(request, "entry.html", **entry_ctx(lib, slug, all, section))
 
     @app.get("/e/{slug}/history", response_class=HTMLResponse)
-    def entry_history(request: Request, slug: str, lib: Lib, all: bool = False) -> HTMLResponse:  # noqa: A002
-        return page(request, "_history.html", **entry_ctx(lib, slug, all))
+    def entry_history(request: Request, slug: str, lib: Lib, all: bool = False,  # noqa: A002
+                      section: str | None = None) -> HTMLResponse:
+        return page(request, "_history.html", **entry_ctx(lib, slug, all, section))
 
     @app.post("/e/{slug}/scan")
     async def scan(request: Request, slug: str) -> Response:
@@ -234,9 +253,11 @@ def create_app(
     # Diff и текст версии
     # ------------------------------------------------------------------
 
-    def diff_ctx(lib: Library, slug: str, a: str | None, b: str | None, view: str | None = None) -> dict[str, object]:
+    def diff_ctx(lib: Library, slug: str, a: str | None, b: str | None, view: str | None = None,
+                section: str | None = None) -> dict[str, object]:
         check_slug(slug)
         a, b = a or None, b or None
+        section = section or None
         view = "side" if view == "side" else "line"
         if a is None and b is None:
             hist = lib.history(slug)
@@ -245,6 +266,10 @@ def create_app(
                 b = candidates[-1].edition.slug
         d: PairDiff | None = None
         error: str | None = None
+        try:
+            known_sections = lib.sections(slug)
+        except SepDiffError:
+            known_sections = []
         try:
             if a and b:
                 d = lib.diff(slug, a, b)
@@ -256,21 +281,28 @@ def create_app(
                 error = "у статьи нет ревизий с правками текста"
         except SepDiffError as exc:
             error = str(exc)
+        if d is not None and section is not None and section not in known_sections:
+            error, d = f"нет раздела {section!r}. Разделы статьи ({slug}): " + (", ".join(known_sections) or "—"), None
         ctx: dict[str, object] = {"slug": slug, "d": d, "error": error, "view": view,
+                                  "section": section, "sections": known_sections,
                                   "a": d.a.slug if d else a, "b": d.b.slug if d else b,
                                   "title": (d.title if d else None) or lib.entry_title(slug) or slug}
         if d is not None:
+            # T9: раздел — понятие только тела статьи, библиография и apparatus им не фильтруются
+            body = filter_section(d.body, section) if section else d.body
+            biblio = d.biblio if section is None else []
+            apparatus = d.apparatus if section is None else []
             render = ops_html_side if view == "side" else ops_html
             ctx.update(
-                body_html=render(d.body), biblio_html=render(d.biblio, 0), apparatus_html=render(d.apparatus, 0),
-                body_changed=changed(d.body), biblio_changed=changed(d.biblio),
-                apparatus_changed=changed(d.apparatus))
+                body_html=render(body), biblio_html=render(biblio, 0), apparatus_html=render(apparatus, 0),
+                body_changed=changed(body), biblio_changed=changed(biblio),
+                apparatus_changed=changed(apparatus))
         return ctx
 
     @app.get("/e/{slug}/diff", response_class=HTMLResponse)
     def diff_page(request: Request, slug: str, lib: Lib, a: str | None = None, b: str | None = None,
-                  view: str | None = None) -> HTMLResponse:
-        ctx = diff_ctx(lib, slug, a, b, view)
+                  view: str | None = None, section: str | None = None) -> HTMLResponse:
+        ctx = diff_ctx(lib, slug, a, b, view, section)
         editions = list(reversed(lib.snapshot_editions(slug)))
         if not editions:
             raise SepDiffError(f"у статьи {slug} нет скачанных снимков")
@@ -278,11 +310,13 @@ def create_app(
 
     @app.get("/e/{slug}/diff/pane", response_class=HTMLResponse)
     def diff_pane(request: Request, slug: str, lib: Lib, a: str | None = None, b: str | None = None,
-                  view: str | None = None) -> HTMLResponse:
-        ctx = diff_ctx(lib, slug, a, b, view)
+                  view: str | None = None, section: str | None = None) -> HTMLResponse:
+        ctx = diff_ctx(lib, slug, a, b, view, section)
         response = page(request, "_pane.html", **ctx)
-        response.headers["HX-Push-Url"] = (
-            f"/e/{slug}/diff?" + urlencode({"a": a or "", "b": b or "", "view": ctx["view"]}))
+        params = {"a": a or "", "b": b or "", "view": ctx["view"]}
+        if ctx["section"]:
+            params["section"] = ctx["section"]
+        response.headers["HX-Push-Url"] = f"/e/{slug}/diff?" + urlencode(params)
         return response
 
     @app.get("/e/{slug}/v/{edition}", response_class=HTMLResponse)

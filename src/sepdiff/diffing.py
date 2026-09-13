@@ -67,6 +67,14 @@ def block_diff(a: list[Block], b: list[Block]) -> list[Op]:
     return ops
 
 
+def filter_section(ops: list[Op], section: str) -> list[Op]:
+    """Только операции внутри указанного раздела (T9, «diff по разделам»):
+
+    op.section — заголовок ближайшего вышестоящего <h2> у блока (см. Op.section).
+    """
+    return [op for op in ops if op.section == section]
+
+
 WordOp = tuple[str, list[str], list[str]]   # (equal|replace|delete|insert, слова из a, слова из b)
 
 

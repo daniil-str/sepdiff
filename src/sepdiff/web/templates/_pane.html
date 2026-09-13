@@ -7,11 +7,24 @@
   <b>{{ d.a.label }} → {{ d.b.label }}</b>
   <span class="muted">· +{{ "{:,}".format(st.words_added) }} / −{{ "{:,}".format(st.words_removed) }} слов
   · абзацев изменено: {{ st.blocks_changed }}</span>
-  {% if st.sections %}<div class="chips">{% for s in st.sections %}<span class="chip">{{ s }}</span>{% endfor %}</div>{% endif %}
+  {% if st.sections %}
+  <div class="chips">
+    {% for s in st.sections %}<a class="chip{% if s == section %} active{% endif %}" title="только этот раздел (T9)"
+      href="/e/{{ slug }}/diff?a={{ d.a.slug }}&amp;b={{ d.b.slug }}&amp;view={{ view }}&amp;section={{ s | urlencode }}"
+      hx-get="/e/{{ slug }}/diff/pane?a={{ d.a.slug }}&amp;b={{ d.b.slug }}&amp;view={{ view }}&amp;section={{ s | urlencode }}"
+      hx-target="#pane">{{ s }}</a>{% endfor %}
+    {% if section %}<a class="chip clear"
+      href="/e/{{ slug }}/diff?a={{ d.a.slug }}&amp;b={{ d.b.slug }}&amp;view={{ view }}"
+      hx-get="/e/{{ slug }}/diff/pane?a={{ d.a.slug }}&amp;b={{ d.b.slug }}&amp;view={{ view }}"
+      hx-target="#pane">× все разделы</a>{% endif %}
+  </div>
+  {% endif %}
 </div>
 
+{% if section %}<p class="muted">только раздел «{{ section }}» (T9) — библиография и apparatus у раздела нет, тут не показаны.</p>{% endif %}
+
 {% if not (body_changed or biblio_changed or apparatus_changed) %}
-<p class="muted">Текст статьи не изменился — отличается только вёрстка сайта.</p>
+<p class="muted">{% if section %}В этом разделе правки между выбранными изданиями нет.{% else %}Текст статьи не изменился — отличается только вёрстка сайта.{% endif %}</p>
 {% endif %}
 
 {% if body_changed %}<article class="diff{% if view == "side" %} side{% endif %}">{{ body_html }}</article>{% endif %}
