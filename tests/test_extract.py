@@ -154,6 +154,16 @@ def test_normalize_typography():
     assert normalize("zero​width") == "zerowidth"
 
 
+def test_unknown_symbol_images():
+    # T6: [img:fig1] в old() — картинка-символ без пары в SYMBOL_IMAGES.
+    d = extract(old(foot=FOOTER_NOV1))
+    assert d.unknown_symbols == ["fig1"]
+    assert extract(page()).unknown_symbols == []            # известные символы сюда не попадают
+    # картинка сама по себе в блоке (портрет и т.п.) — не текст, значит и не "символ"
+    only_image = extract(page(extra_para='<p><img src="mystery.jpg"></p>'))
+    assert only_image.unknown_symbols == []
+
+
 def test_parse_retirement():
     # T5: SEP не редиректит снятую/переименованную статью — вместо текста
     # отдаёт «Document Retired» (docs/journal.md §22), это не обычная статья.

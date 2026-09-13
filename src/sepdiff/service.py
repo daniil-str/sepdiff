@@ -916,6 +916,26 @@ class Library:
         check_slug(slug)
         return self._doc(self._snapshot(slug, edition).blob_sha)  # type: ignore[arg-type]
 
+    def symbol_report(self, slug: str | None = None) -> list[tuple[str, int, list[tuple[str, str]]]]:
+        """Незнакомые картинки-символы среди скачанных снимков (T6, PLAN.md).
+
+        Читает и разбирает каждый скачанный снимок заново — дорого при полном
+        прогоне по data/, но это отчёт по требованию, не часть обычного sepdiff
+        fetch. (имя, число снимков, первые места) по убыванию частоты.
+        """
+        where = "WHERE blob_sha IS NOT NULL" + (" AND entry_slug = ?" if slug else "")
+        args = (slug,) if slug else ()
+        rows = self.conn.execute(
+            f"SELECT entry_slug, edition_slug, blob_sha FROM snapshots {where} "
+            "ORDER BY entry_slug, edition_slug", args).fetchall()
+        found: dict[str, list[tuple[str, str]]] = {}
+        for row in rows:
+            doc = self._doc(row["blob_sha"])
+            for name in doc.unknown_symbols:
+                found.setdefault(name, []).append((row["entry_slug"], row["edition_slug"]))
+        return sorted(((name, len(locs), locs[:5]) for name, locs in found.items()),
+                       key=lambda t: (-t[1], t[0]))
+
     def _blame_fingerprint(self, hist: History) -> str:
         # Дешёвая проверка «ревизии те же, что в прошлый раз»: без чтения документов,
         # только то, что уже есть в hist. Расходится — rebuild что-то поменял.

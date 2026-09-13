@@ -1,4 +1,4 @@
-"""Командная строка: sepdiff init / seed / search / fetch / live / log / diff / show / export-git / import / serve."""
+"""Командная строка: sepdiff init/seed/search/fetch/live/log/diff/show/symbols/export-git/import/serve."""
 
 from __future__ import annotations
 
@@ -464,6 +464,27 @@ def show(slug: str, edition: str) -> None:
                 typer.secho(f"── {name} ──", bold=True)
                 for blk in blocks:
                     typer.echo(f"• {blk.text}")
+
+
+@app.command()
+def symbols(
+    slug: Annotated[str | None, typer.Argument(
+        help="Только эта статья. Без аргумента — по всем скачанным снимкам.")] = None,
+) -> None:
+    """Незнакомые картинки-символы ([img:имя] без пары в SYMBOL_IMAGES, T6).
+
+    Пропущенный символ молча превращается в правку, когда SEP заменит картинку
+    на юникод. Частые находки — кандидаты в SYMBOL_IMAGES (extract.py).
+    """
+    with _library() as lib:
+        report = lib.symbol_report(slug)
+        if not report:
+            typer.echo("Незнакомых картинок-символов не найдено.")
+            return
+        for name, count, examples in report:
+            where = ", ".join(f"{s}@{e}" for s, e in examples)
+            more = f" и ещё {count - len(examples)}" if count > len(examples) else ""
+            typer.echo(f"[img:{name}]  {count} {_plural(count, 'снимок', 'снимка', 'снимков')}: {where}{more}")
 
 
 @app.command()
