@@ -9,7 +9,7 @@
   {% if hist %}
   · снимков {{ hist.snapshots }} из {{ hist.editions }} изданий
   {% set diffs = hist.revisions | selectattr("kind", "in", TEXT_KINDS) | list %}
-  {% if diffs %}· <a href="/e/{{ slug }}/diff">последняя правка</a>{% endif %}
+  {% if diffs %}· <a href="/e/{{ slug }}/diff">последняя правка</a> · <a href="/e/{{ slug }}/blame">blame</a>{% endif %}
   {% endif %}
 </div>
 

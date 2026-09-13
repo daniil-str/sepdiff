@@ -71,6 +71,21 @@ def test_scan_history_and_diff(web):
     assert "Immanuel Kant" in r.text and "Kant never travelled" in r.text
 
 
+def test_blame_page(web):
+    # T4: /e/{slug}/blame — абзац последней версии, у каждого издание последней правки.
+    client, worker = web
+    client.post("/e/kant/scan", headers=HX)
+    assert worker.run_once()
+
+    assert '<a href="/e/kant/blame">blame</a>' in client.get("/e/kant").text
+
+    r = client.get("/e/kant/blame")
+    assert r.status_code == 200
+    assert 'href="/e/kant/diff?b=spr2020"' in r.text        # преамбула не менялась с первой версии
+    assert 'href="/e/kant/diff?b=win2020"' in r.text         # lived -> spent
+    assert "Kant never travelled" in r.text and "will be removed later" not in r.text
+
+
 def test_diff_side_by_side_view(web):
     # T3: переключатель «построчно / рядом», состояние хранится в ?view=.
     client, worker = web
