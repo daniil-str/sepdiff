@@ -151,6 +151,18 @@ class Doc:
     def word_count(self) -> int:
         return sum(len(b.words) for b in self.body)
 
+    @property
+    def unknown_symbols(self) -> list[str]:
+        """Имена картинок-символов (T6, PLAN.md) без пары в SYMBOL_IMAGES.
+
+        Только те, что остались внутри текстовых блоков вперемешку с текстом:
+        картинка сама по себе в блоке (портрет и т.п.) уже выброшена _is_text
+        как «не текст» и сюда не попадает — это и отличает символ от decor.
+        """
+        names = {m.group(1) for b in self.body + self.biblio + self.apparatus
+                 for m in _IMG_TAG_RE.finditer(b.text)}
+        return sorted(names - SYMBOL_IMAGES.keys())
+
 
 def _has_block_descendant(node: LexborNode) -> bool:
     for child in node.iter(include_text=False):
@@ -296,6 +308,7 @@ def _img_text(img: LexborNode) -> str:
 
 
 _IMAGE_ONLY_RE = re.compile(r"(\[img:[^\]]*\]\s*)+")
+_IMG_TAG_RE = re.compile(r"\[img:([^\]]+)\]")
 
 
 def _is_text(block: Block) -> bool:

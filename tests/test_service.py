@@ -1,6 +1,6 @@
 import pytest
 from fakes import EDS, KANT, FakeFetcher, site
-from pages import LIVE_PENDING, MINOR, SUBSTANTIVE, page, retired
+from pages import FOOTER_NOV1, LIVE_PENDING, MINOR, SUBSTANTIVE, old, page, retired
 from typer.testing import CliRunner
 
 from sepdiff.cli import app
@@ -124,6 +124,27 @@ def test_retired_entry_is_detected_and_cross_referenced(tmp_path):
         assert lib.predecessors("kant") == []
 
         assert lib.refresh_live("kant") == "cached"            # раз в сутки, как и раньше
+
+
+def test_symbol_report_finds_unmapped_images(tmp_path):
+    # T6: [img:fig1] в old() — картинка-символ, для которой нет пары в SYMBOL_IMAGES.
+    pages = site({"kant": KANT, "qualia": {"spr2020": old(foot=FOOTER_NOV1)}})
+    with Library(tmp_path, fetcher=FakeFetcher(pages)) as lib:  # type: ignore[arg-type]
+        lib.init_editions()
+        lib.scan("kant", live=False)
+        lib.scan("qualia", only=["spr2020"], live=False)
+        assert lib.symbol_report() == [("fig1", 1, [("qualia", "spr2020")])]
+        assert lib.symbol_report("kant") == []                      # в kant незнакомых картинок нет
+        assert lib.symbol_report("qualia") == lib.symbol_report()
+
+
+def test_cli_symbols(lib, monkeypatch):
+    lib.scan("kant", live=False)
+    monkeypatch.setenv("SEPDIFF_DATA", str(lib.root))
+    runner = CliRunner()
+    out = runner.invoke(app, ["symbols"])
+    assert out.exit_code == 0, out.output
+    assert "Незнакомых картинок-символов не найдено." in out.output
 
 
 def test_history(lib):
