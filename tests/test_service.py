@@ -1,9 +1,10 @@
 import pytest
 from fakes import EDS, KANT, FakeFetcher, site
-from pages import LIVE_PENDING, MINOR, SUBSTANTIVE, page
+from pages import LIVE_PENDING, MINOR, SUBSTANTIVE, page, retired
 from typer.testing import CliRunner
 
 from sepdiff.cli import app
+from sepdiff.diffing import PairStats
 from sepdiff.fetcher import Response
 from sepdiff.service import Library, SepDiffError
 
@@ -98,6 +99,31 @@ def test_live_uses_conditional_get_and_sees_removal(tmp_path):
         fetcher.gone = True
         assert lib.refresh_live("kant", force=True) == "gone"
         assert lib.history("kant").live.kind == "removed"  # type: ignore[union-attr]
+
+
+def test_retired_entry_is_detected_and_cross_referenced(tmp_path):
+    # T5: SEP не редиректит снятую/переименованную статью — вместо текста
+    # /entries/<slug>/ отдаёт «Document Retired» (docs/journal.md §22).
+    pages = site({"kant": KANT})
+    pages["/entries/kant/"] = retired(successor="new-entry", last_edition="sum2021")
+    with Library(tmp_path, fetcher=FakeFetcher(pages)) as lib:  # type: ignore[arg-type]
+        lib.init_editions()
+        lib.scan("kant")
+        assert lib.refresh_live("kant", force=True) == "retired"
+
+        live = lib.live_revision("kant")
+        assert live is not None
+        assert (live.kind, live.successor) == ("retired", "new-entry")
+        assert live.stats == PairStats()                    # сравнивать с уведомлением нечего
+
+        hist = lib.history("kant")
+        assert hist.live is not None and hist.live.kind == "retired"   # type: ignore[union-attr]
+
+        lib._ensure_entry("new-entry")                        # noqa: SLF001 — сама статья ещё не скачана
+        assert lib.predecessors("new-entry") == [("kant", "Immanuel Kant")]
+        assert lib.predecessors("kant") == []
+
+        assert lib.refresh_live("kant") == "cached"            # раз в сутки, как и раньше
 
 
 def test_history(lib):
@@ -237,6 +263,27 @@ def test_cli_log_and_diff(lib, monkeypatch):
     assert "[-lived-]" in out.output and "{+spent+}" in out.output
     out = runner.invoke(app, ["diff", "kant", "fall2019", "win2020"])
     assert out.exit_code == 1 and "Ошибка" in out.output
+
+
+def test_cli_shows_retirement_and_cross_reference(lib, monkeypatch):
+    # sepdiff live/watch --check делают настоящий сетевой запрос (не в тесте!) —
+    # готовим ретир через FakeFetcher фикстуры, а CLI дальше только читает базу.
+    lib.scan("kant")
+    lib.fetcher.pages["/entries/kant/"] = retired(successor="new-entry", last_edition="sum2021")  # type: ignore[attr-defined]
+    assert lib.refresh_live("kant", force=True) == "retired"
+    lib.fetcher.pages["/archives/sum2021/entries/new-entry/"] = page(nav="new-entry")  # type: ignore[attr-defined]
+    lib.scan("new-entry")   # у преемницы своя история — иначе sepdiff log ей не покажет ничего
+
+    monkeypatch.setenv("SEPDIFF_DATA", str(lib.root))
+    runner = CliRunner()
+
+    out = runner.invoke(app, ["log", "kant"])
+    assert out.exit_code == 0, out.output
+    assert "снята" in out.output and "new-entry" in out.output
+
+    out = runner.invoke(app, ["log", "new-entry"])
+    assert out.exit_code == 0, out.output
+    assert "kant" in out.output and "sepdiff log kant" in out.output
 
 
 def test_watch_list_and_feed(tmp_path):

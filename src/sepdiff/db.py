@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 SCHEMA = """
 -- квартальные издания SEP, по порядку выхода
@@ -141,6 +141,13 @@ MIGRATIONS = {
         data         TEXT NOT NULL   -- JSON: [[kind, section, text, edition_slug], ...]
     );
     """,
+    # T5, docs/journal.md §22: SEP не делает редиректов на снятую/переименованную
+    # статью — /entries/<slug>/ остаётся 200, но вместо текста отдаёт служебную
+    # страницу «Document Retired». Раз статья и её преемница — разные по смыслу
+    # статьи (не одна и та же под новым именем), истории не сшиваем — только
+    # перекрёстная ссылка на live-снимке снятой статьи.
+    8: "ALTER TABLE live ADD COLUMN retired_successor TEXT; "
+       "ALTER TABLE live ADD COLUMN retired_last_edition TEXT;",
 }
 
 

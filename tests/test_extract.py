@@ -1,10 +1,21 @@
 from dataclasses import replace
 
 import pytest
-from pages import BOX_JUN6, BOX_NOV2, FOOTER_NOV1, LEGACY, RELATED, SUBSTANTIVE, old, page
+from pages import (
+    BOX_JUN6,
+    BOX_NOV2,
+    FOOTER_NOV1,
+    LEGACY,
+    RELATED,
+    SUBSTANTIVE,
+    old,
+    page,
+    retired,
+    retired_no_successor,
+)
 
 from sepdiff.diffing import classify
-from sepdiff.extract import extract, find_date
+from sepdiff.extract import extract, find_date, parse_retirement
 from sepdiff.normalize import normalize
 
 
@@ -141,3 +152,17 @@ def test_normalize_typography():
     assert normalize("the term `qualia'") == "the term 'qualia'"
     assert normalize("“Sapere aude!”   is the – motto") == '"Sapere aude!" is the - motto'
     assert normalize("zero​width") == "zerowidth"
+
+
+def test_parse_retirement():
+    # T5: SEP не редиректит снятую/переименованную статью — вместо текста
+    # отдаёт «Document Retired» (docs/journal.md §22), это не обычная статья.
+    r = parse_retirement(retired(successor="new-entry", last_edition="sum2018"))
+    assert r is not None
+    assert (r.successor, r.last_edition) == ("new-entry", "sum2018")
+
+    r2 = parse_retirement(retired_no_successor(last_edition="win2020"))
+    assert r2 is not None
+    assert (r2.successor, r2.last_edition) == (None, "win2020")
+
+    assert parse_retirement(page()) is None   # обычная статья — не «Document Retired»

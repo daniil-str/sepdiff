@@ -406,3 +406,43 @@ def extract(raw: bytes) -> Doc:
     return Doc(extractor, encoding, title, pubinfo, revision_date, date_source,
                body, biblio + tail_biblio, apparatus + tail_apparatus, sha(raw), coverage,
                links["related-entries"], links["other-internet-resources"], supplements)
+
+
+# --------------------------------------------------------------------------
+# Снятые статьи (T5, PLAN.md)
+# --------------------------------------------------------------------------
+
+# SEP не делает HTTP-редиректов на переименование/снятие статьи (проверено на
+# реальных примерах, docs/journal.md §22): /entries/<slug>/ отвечает 200, но
+# вместо статьи отдаёт эту служебную страницу. Заголовок — одна и та же строка
+# во всех виденных случаях; внутри — либо ссылка на статью-преемницу (текст
+# ссылки — сам её полный URL), либо (если преемницы нет) статья просто снята
+# в архив; и всегда — ссылка на последнее издание, где статья ещё была живой.
+_RETIRED_TITLE = "Document Retired"
+_ENTRY_URL_RE = re.compile(r"^https://plato\.stanford\.edu/entries/([a-z0-9][a-z0-9.-]*)/?$")
+_ARCHIVED_HREF_RE = re.compile(r"archives/((?:spr|sum|fall|win)\d{4})/entries/")
+
+
+@dataclass
+class Retirement:
+    successor: str | None        # slug статьи-преемницы; None — просто снята, без замены
+    last_edition: str | None     # последнее издание в архиве, где статья ещё была
+
+
+def parse_retirement(raw: bytes) -> Retirement | None:
+    """Разобрать /entries/<slug>/ как «Document Retired»; None — это обычная статья."""
+    text, _ = _decode(raw)
+    content = LexborHTMLParser(text).css_first("#content")
+    if content is None:
+        return None
+    h1 = content.css_first("h1")
+    if h1 is None or normalize(h1.text()) != _RETIRED_TITLE:
+        return None
+    successor = last_edition = None
+    for a in content.css("a[href]"):
+        href = a.attributes.get("href") or ""
+        if last_edition is None and (m := _ARCHIVED_HREF_RE.search(href)):
+            last_edition = m.group(1)
+        if successor is None and (m := _ENTRY_URL_RE.fullmatch(normalize(a.text()))):
+            successor = m.group(1)
+    return Retirement(successor, last_edition)
